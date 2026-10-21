@@ -1,0 +1,51 @@
+{
+  "name": "multi-credits-pool",
+  "version": "0.3.4",
+  "description": "澶氳处鍙?WorkBuddy锛氭瘡鏃ヨ嚜鍔ㄧ鍒般€佺Н鍒嗘眹鎬伙紝骞舵妸澶氳处鍙锋ā鍨嬭疆鎹㈡敞鍐屾垚瀹夸富鐨勪竴涓?provider",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "bin",
+    "src",
+    "docs",
+    "README.md",
+    "TESTING.md"
+  ],
+  "bin": {
+    "multi-credits-pool": "bin/credits.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "workbuddy",
+    "multi-account"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "license": "MIT"
+}

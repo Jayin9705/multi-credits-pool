@@ -1,0 +1,10 @@
+node_modules/
+*.log
+
+# 本地测试与截图产物
+.credits-test/
+.wbm-test/
+.shtmp/
+.credits/
+.publish/
+tools/preview-*.html

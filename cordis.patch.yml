@@ -1,0 +1,8 @@
+# 把自研的多账号 provider 挂进宿主。
+#
+# 这个条目启动时会在回环端口上开一个 OpenAI 兼容端点（多账号轮换在里面完成），
+# 再把它登记成 llm-pi-ai 的一个 provider profile：模型选择器里出现
+# 「multi-credits-pool」，请求由插件内部的轮换逻辑决定实际用哪个账号。
+- insert:
+    - id: llm-multi-credits-pool
+      name: multi-credits-pool
