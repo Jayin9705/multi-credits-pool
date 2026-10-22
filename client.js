@@ -1622,15 +1622,25 @@ window.__ModuleLoader__.load({
 			const [autoCheckin, setAutoCheckin] = react.useState(true)
 			const [timeText, setTimeText] = react.useState(minuteText(600))
 
+			// 连续换档时前一次的响应可能后到：记一个序号，只认最后一次发出的那一次，
+			// 否则刚点「近一个月」又被回得慢的「昨天」盖回去。
+			const latestRequest = react.useRef(0)
+
 			const refresh = react.useCallback(async nextRange => {
+				const ticket = latestRequest.current + 1
+				latestRequest.current = ticket
 				try {
 					const next = await loadSharedState(nextRange)
+					// 已经被更新的请求顶掉了，这次的结果作废。
+					if (latestRequest.current !== ticket) return undefined
 					setState(next)
 					setAutoCheckin(next.config.autoCheckin === true)
 					setTimeText(minuteText(next.config.minuteOfDay))
 					setError(undefined)
 					return next
 				} catch (failure) {
+					// 同样只让最后一次请求的失败落在界面上。
+					if (latestRequest.current !== ticket) return undefined
 					setError(failure instanceof Error ? failure.message : String(failure))
 					return undefined
 				}
@@ -1648,7 +1658,8 @@ window.__ModuleLoader__.load({
 
 			// 换档要重新拉状态：时间轴由服务端按档位铺格，前端只负责画。
 			// 首屏那次已经按档位取过数，这里跳过；但档位从面板传进来、且面板自己拉
-			// 数据时用的也是同一个档位，所以两边不会打架。
+			// 数据时用的也是同一个档位，所以两边不会打架。回跳时也按当前档位重拉一次，
+			// 免得拿后台刷新那份默认档的数据作数。
 			const firstRangeSkipped = react.useRef(false)
 			react.useEffect(() => {
 				if (firstRangeSkipped.current === false) {
@@ -1811,9 +1822,13 @@ window.__ModuleLoader__.load({
 		 */
 		function MultiCreditsPoolPanel(props) {
 			const wide = props?.variant === 'panel'
-			// 预览与断言只做一次静态渲染，拿不到换成「近一周」之后的第二次响应，所以
-			// 首屏直接按请求的档位去拿数据；交互里换档仍走 refresh(range)。
-			const data = usePanelState({ range: USAGE_RANGES.some(item => item.id === props?.initialRange) ? props.initialRange : DEFAULT_USAGE_RANGE })
+			// 预览与断言只做一次静态渲染，拿不到第二次响应，所以首屏就按请求的档位取数；
+			// 交互里换档由 `usePanelState` 的换档副作用重新拉。档位必须放在取数之前，
+			// 取数读的就是这个状态。
+			const [range, setRange] = react.useState(USAGE_RANGES.some(item => item.id === props?.initialRange) ? props.initialRange : DEFAULT_USAGE_RANGE)
+			// 档位要喂给取数：`usePanelState` 按这个值重新拉状态，时间轴由服务端按档位铺格。
+			// 这里传常量的话四个按钮点下去都只会拿到同一份时间轴。
+			const data = usePanelState({ range })
 			const status = data.state?.status
 			const totals = status?.totals
 			const rows = status?.rows ?? []
@@ -1829,9 +1844,7 @@ window.__ModuleLoader__.load({
 			const [renaming, setRenaming] = react.useState(
 				typeof props?.initialRename === 'string' ? { id: props.initialRename, draft: rows.find(row => row.id === props.initialRename)?.label } : undefined,
 			)
-			// 「按时间」卡片的两处交互状态：选中的档位、点开的格子。放这里而不是卡片里，
-			// 是因为换页签回来要保留住用户刚选的档位。
-			const [range, setRange] = react.useState(USAGE_RANGES.some(item => item.id === props?.initialRange) ? props.initialRange : DEFAULT_USAGE_RANGE)
+			// 「按时间」卡片要点的那个格子。档位在上面（取数要用它），这里只留格子。
 			const [pickKey, setPickKey] = react.useState(
 				typeof props?.initialPick === 'string' ? props.initialPick : undefined,
 			)
