@@ -4,6 +4,12 @@
 
 纯 ESM JavaScript，零依赖，零构建，要求 Node.js 22.19 及以上（或使用 DSH 桌面版自带运行时）。
 
+```powershell
+npm install -g multi-credits-pool   # 只是为了跑命令行
+```
+
+作为 DSH 插件安装时，在插件的安装入口填包名 `multi-credits-pool` 即可。
+
 ## 界面
 
 | 中栏看板 | 账号展开 · 逐段积分 |
@@ -84,13 +90,19 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\smoke.ps1
 ```
 
-在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回，31 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，34 项）、`tools/ui-test.mjs`（界面渲染断言，78 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，33 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，59 项）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）与 `tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）。
+在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回，31 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，37 项）、`tools/ui-test.mjs`（界面渲染断言，116 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，45 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，81 项）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）与 `tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）。
 
 调界面时用 `node tools\preview.mjs --shot` 生成七个预览页并截成 PNG，落在 `tools/`，不装插件也能看排版；README 里引用的那组在 `docs/screenshots/`。
 
 单独跑某一组就是 `node tools/strategy-test.mjs`，失败时退出码非零。`tools/` 是本地开发目录，不随发布副本走。
 
 ## 安装与卸载
+
+### 从模型/插件市场装（推荐）
+
+在 DSH 的插件安装入口填包名 `multi-credits-pool`，或带版本号 `multi-credits-pool@0.3.8`，由宿主的安装器自己下载并挂进 profile。
+
+### 从源码装
 
 ```powershell
 # 装机：把包拷进 DSH profile 的 node_modules，并在 profile 的 package.json 里挂上
