@@ -65,8 +65,6 @@ window.__ModuleLoader__.load({
 		const DEFAULT_USAGE_RANGE = 'week'
 
 		/** 圆点直径区间（px）：最小要能点中，最大不把一行撑得太高。 */
-		const DOT_MIN_PX = 10
-		const DOT_MAX_PX = 22
 
 		/**
 		 * 四种账号调用方式。`hint` 写清代价——切换模式会改变上游缓存命中率，
@@ -123,6 +121,26 @@ window.__ModuleLoader__.load({
 		 * 这里只用来区分不同模型，不表达好坏。
 		 */
 		const MODEL_COLORS = ['#5686fe', '#22a06b', '#a855f7', '#f59e0b', '#0ea5e9', '#f472b6', '#8b5cf6', '#14b8a6']
+
+		/** 环形饼图的画布与半径（单位像素）：viewBox 与 CSS 尺寸一致，省掉缩放换算。 */
+		const DONUT_SIZE = 168
+		const DONUT_OUTER = 78
+		const DONUT_INNER = 52
+		/**
+		 * 扇区之间留的白缝，单位是角度。
+		 *
+		 * 份额很小的扇区如果只按份额分角度，缝会比它本身还宽，画出来只剩一条缝。所以按
+		 * 「份额最大时留满缝、份额小时缝按比例收窄」来算，份额 0 的扇区不留缝。
+		 */
+		const DONUT_GAP_DEG = 1.4
+		/** 扇区角度小于这个值就退化成一条半径，否则 SVG 画不出一条看得见的弧。 */
+		const DONUT_MIN_ARC_DEG = 1.2
+		/** 没有请求的档位用一圈浅色虚线表示整段时间的边界。 */
+		const DONUT_TRACK = 'color-mix(in oklab, var(--credits-line) 80%, transparent)'
+		/** 图例最多列几条：环上再多的扇区，靠悬停与刻度看，图例只留最重的几段。 */
+		const DONUT_LEGEND_MAX = 6
+		/** 三种色调对应的实色，图例色块与扇区共用同一套语义。 */
+		const DONUT_TONE_COLORS = { ok: MODEL_COLORS[0], warn: '#d97706', bad: '#ef4444' }
 
 		const h = react.createElement
 
@@ -305,28 +323,34 @@ window.__ModuleLoader__.load({
 .credits-model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:132px}
 .credits-model-count{font-variant-numeric:tabular-nums;color:var(--credits-fg2)}
 
-/* ---------- 按时间：圆点时间轴 ---------- */
+/* ---------- 按时间：环形饼图 ---------- */
 .credits-ranges{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:999px;background:color-mix(in oklab,var(--credits-fg) 5%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--credits-line) 70%,transparent)}
 .credits-range{border:0;background:transparent;padding:3px 9px;border-radius:999px;font-size:11px;line-height:15px;color:var(--credits-fg3);cursor:pointer;transition:color .15s ease,background .15s ease}
 .credits-range:hover:not([data-active="true"]){color:var(--credits-fg);background:color-mix(in oklab,var(--credits-fg) 7%,transparent)}
 .credits-range[data-active="true"]{color:var(--credits-fg);background:var(--credits-card);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--credits-line) 90%,transparent)}
 .credits-dots-summary{white-space:nowrap}
-.credits-dots{display:flex;align-items:center;justify-content:space-between;gap:2px;padding:10px 2px 2px;min-height:30px}
-.credits-dots-hour{overflow-x:auto;scrollbar-width:thin}
-.credits-dot-slot{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;padding:2px;border:0;background:transparent;cursor:pointer;border-radius:999px}
-.credits-dots-hour .credits-dot-slot{flex:0 0 auto;width:20px}
-.credits-dot{display:block;border-radius:999px;transition:box-shadow .15s ease,opacity .15s ease;background:var(--credits-brand)}
-.credits-dot[data-tone="ok"]{background:var(--credits-brand)}
-.credits-dot[data-tone="warn"]{background:var(--credits-warn)}
-.credits-dot[data-tone="bad"]{background:var(--credits-bad)}
-.credits-dot[data-tone="empty"]{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in oklab,var(--credits-line) 95%,transparent)}
-.credits-dot-slot:hover .credits-dot{opacity:.82}
-.credits-dot[data-active="true"]{box-shadow:0 0 0 2px var(--credits-card),0 0 0 3.5px color-mix(in oklab,var(--credits-fg) 45%,transparent)}
-.credits-dots-axis{display:flex;justify-content:space-between;gap:2px;font-size:9.5px;line-height:12px;color:var(--credits-fg3);font-variant-numeric:tabular-nums}
-.credits-dots-tick{flex:1 1 0;min-width:0;text-align:center;white-space:nowrap}
-.credits-dots-tick[data-fade="true"]{opacity:0}
-.credits-dots-hour .credits-dots-axis{overflow:hidden}
-.credits-dots-hour .credits-dots-tick{flex:0 0 auto;width:20px}
+.credits-donut{display:flex;align-items:center;gap:clamp(14px,3vw,28px);flex-wrap:wrap;padding:8px 2px 2px}
+.credits-donut-figure{position:relative;flex:none;width:168px;height:168px}
+.credits-donut-svg{display:block;width:100%;height:100%;overflow:visible}
+.credits-donut-slice{fill:var(--credits-brand);stroke:var(--credits-card);stroke-width:1;cursor:pointer;transition:opacity .15s ease,filter .15s ease;transform-origin:84px 84px}
+.credits-donut-slice[data-tone="ok"]{fill:var(--credits-brand)}
+.credits-donut-slice[data-tone="warn"]{fill:var(--credits-warn)}
+.credits-donut-slice[data-tone="bad"]{fill:var(--credits-bad)}
+.credits-donut-slice:hover{filter:brightness(1.12) saturate(1.05)}
+.credits-donut-slice[data-active="true"]{filter:brightness(1.16) saturate(1.1);stroke:var(--credits-card);stroke-width:2}
+.credits-donut-slice:focus-visible{outline:none;filter:brightness(1.16) saturate(1.1)}
+.credits-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;pointer-events:none;text-align:center}
+.credits-donut-total{font-size:26px;line-height:30px;font-weight:650;color:var(--credits-fg);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.credits-donut-unit{font-size:10.5px;line-height:14px;color:var(--credits-fg3)}
+.credits-donut-scope{margin-top:3px;font-size:10px;line-height:13px;padding:1px 7px;border-radius:999px;color:var(--credits-fg2);background:color-mix(in oklab,var(--credits-fg) 7%,transparent)}
+.credits-donut-side{flex:1 1 200px;min-width:0;display:flex;flex-direction:column;gap:2px}
+.credits-donut-legend-item{display:flex;align-items:center;gap:8px;width:100%;padding:4px 6px;border:0;border-radius:7px;background:transparent;cursor:pointer;text-align:left;font:inherit;transition:background .15s ease}
+.credits-donut-legend-item:hover{background:color-mix(in oklab,var(--credits-fg) 5%,transparent)}
+.credits-donut-legend-item[data-active="true"]{background:color-mix(in oklab,var(--credits-brand) 14%,transparent)}
+.credits-donut-swatch{flex:none;width:8px;height:8px;border-radius:2.5px}
+.credits-donut-legend-label{flex:1 1 auto;min-width:0;font-size:11px;line-height:15px;color:var(--credits-fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.credits-donut-legend-share{flex:none;font-size:11px;line-height:15px;color:var(--credits-fg);font-variant-numeric:tabular-nums;font-weight:600}
+.credits-donut-note{margin:2px 0 0;font-size:10px;line-height:14px;color:var(--credits-fg3)}
 .credits-dot-detail{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 9px;border-radius:8px;background:color-mix(in oklab,var(--credits-fg) 4%,transparent);font-size:11px;line-height:16px;color:var(--credits-fg2)}
 .credits-dot-detail-title{font-size:11.5px;font-weight:600;color:var(--credits-fg);font-variant-numeric:tabular-nums}
 
@@ -1023,32 +1047,77 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 按时间看板的圆点直径。
+		 * 扇形两端的坐标。
 		 *
-		 * 按面积正比缩放：人眼比的是圆的面积而不是直径，直接拿请求数乘直径会让
-		 * 「两倍请求」看起来像四五倍。取平方根就等于让面积线性于请求数，最小值
-		 * 兜住「只有一两次请求」的格子，否则点会小到点不中。
+		 * 起点在 12 点方向（角度 -90），顺着顺时针铺。角度用度数传入，内部换弧度；
+		 * 这样调用方算份额时不必关心三角函数。
 		 */
-		function dotSize(requests, max) {
-			if (max <= 0 || requests <= 0) return DOT_MIN_PX
-			const ratio = Math.min(1, requests / max)
-			return Math.round(DOT_MIN_PX + (DOT_MAX_PX - DOT_MIN_PX) * Math.sqrt(ratio))
+		function donutPoint(radius, angleDeg) {
+			const rad = ((angleDeg - 90) * Math.PI) / 180
+			return [DONUT_SIZE / 2 + radius * Math.cos(rad), DONUT_SIZE / 2 + radius * Math.sin(rad)]
 		}
 
 		/**
-		 * 圆点配色。
+		 * 把一格时间画成圆环上的一段：返回 SVG path 的 d 属性。
 		 *
-		 * 有失败但没过半给琥珀、过半给红色：这里只回答「这一天稳不稳」，具体的失败
-		 * 次数在悬停与固定明细里。没有数据的天给空心态，保留格位，读者才知道那天
-		 * 确实没请求，而不是被截掉了。
+		 * 用「外弧 → 内弧反着绕回去」两段拼成闭环的写法，比用 stroke-dasharray 叠两个
+		 * 圆更可控：扇区的两端是正对着圆心的直边，缝宽按角度给，不会因为线宽而互相压。
+		 * 角度不足 `DONUT_MIN_ARC_DEG` 时画不出一条弧（两端几乎重合，SVG 会画出空白），
+		 * 于是退化成一条从内圈到外圈的细线，小份额至少还看得见。
 		 */
-		function timelineTone(point) {
-			if (point.requests <= 0) return 'empty'
+		function donutSlicePath(startDeg, endDeg) {
+			const span = endDeg - startDeg
+			if (span < DONUT_MIN_ARC_DEG) {
+				const mid = startDeg + span / 2
+				const [x1, y1] = donutPoint(DONUT_INNER, mid)
+				const [x2, y2] = donutPoint(DONUT_OUTER, mid)
+				return `M ${x1} ${y1} L ${x2} ${y2}`
+			}
+			const largeArc = span > 180 ? 1 : 0
+			const [xo1, yo1] = donutPoint(DONUT_OUTER, startDeg)
+			const [xo2, yo2] = donutPoint(DONUT_OUTER, endDeg)
+			const [xi2, yi2] = donutPoint(DONUT_INNER, endDeg)
+			const [xi1, yi1] = donutPoint(DONUT_INNER, startDeg)
+			return `M ${xo1} ${yo1} A ${DONUT_OUTER} ${DONUT_OUTER} 0 ${largeArc} 1 ${xo2} ${yo2} L ${xi2} ${yi2} A ${DONUT_INNER} ${DONUT_INNER} 0 ${largeArc} 0 ${xi1} ${yi1} Z`
+		}
+
+		/**
+		 * 把时间轴切成扇区。
+		 *
+		 * 角度按请求数占比分：整圆 360°，一格占 `requests / 总请求数`。没有请求的格子
+		 * 不占角度——它们画不出任何面积，硬留一格只会在环上凭空多出一段和数量无关的
+		 * 弧。这些格子的存在感交给下面那句「N 个时间段没有请求」和整环浅色底圈。
+		 *
+		 * 缝宽按份额缩放：最大的一段吃满 `DONUT_GAP_DEG`，其余按自己占最大段的几分之几
+		 * 收窄，免得缝把只占很小一角的段吃光。扇区太多（近一个月 30 格）时额外把缝压到
+		 * 更小，保持环面上的信息密度。
+		 */
+		function donutSlices(points) {
+			const total = points.reduce((sum, point) => sum + Math.max(0, point.requests ?? 0), 0)
+			const filled = points.filter(point => (point.requests ?? 0) > 0)
+			if (total <= 0) return []
+			const gapScale = filled.length > 16 ? 0.45 : 1
+			const biggest = filled.reduce((best, point) => Math.max(best, point.requests), 0)
+			let cursor = 0
+			return filled.map(point => {
+				const share = point.requests / total
+				const span = share * 360
+				/* 份额最大的段吃满缝宽，其余按自己占最大段的几分之几收窄。 */
+				const gap = Math.min(span * 0.45, DONUT_GAP_DEG * gapScale * (point.requests / biggest))
+				const startDeg = cursor + gap / 2
+				const endDeg = cursor + span - gap / 2
+				cursor += span
+				return { point, share, startDeg, endDeg }
+			})
+		}
+
+		/** 扇区配色：沿用「稳不稳」的语义，全成功品牌色、偶有失败琥珀、失败过半红色。 */
+		function donutTone(point) {
 			if (point.failed <= 0) return 'ok'
 			return point.failed * 2 >= point.requests ? 'bad' : 'warn'
 		}
 
-		/** 圆点的悬停与读屏文案：这一格是什么时候、几次、失败几次、多少 token。 */
+		/** 扇区的悬停与读屏文案：这段时间是什么时候、几次、占多少、失败几次、多少 token。 */
 		function timelineTitle(point, unit, withModels) {
 			const when = point.title ?? point.label
 			if (point.requests <= 0) return `${when}：没有请求`
@@ -1057,14 +1126,6 @@ window.__ModuleLoader__.load({
 			parts.push(`入 ${formatNumber(point.promptTokens)} 出 ${formatNumber(point.completionTokens)}`)
 			if (withModels === true && Array.isArray(point.models) && point.models.length === 1) parts.push(point.models[0].model)
 			return `${when} · ${parts.join(' · ')}`
-		}
-
-		/** 小时档的刻度太密，只给整点留字，其余留空但占位。 */
-		function isFadedTick(label, count) {
-			if (count <= 12) return false
-			const hour = Number.parseInt(String(label), 10)
-			if (!Number.isFinite(hour)) return false
-			return hour % 6 !== 0
 		}
 
 		/** 卡片头上那句汇总：窗口内几次、失败几次、最忙的一格是多少。 */
@@ -1076,6 +1137,92 @@ window.__ModuleLoader__.load({
 			if (failed > 0) parts.push(`失败 ${formatNumber(failed)} 次`)
 			if (busy !== undefined && busy.requests > 0) parts.push(`最多 ${busy.title ?? busy.label} ${formatNumber(busy.requests)} 次`)
 			return h('span', { className: 'credits-aside credits-dots-summary' }, parts.join(' · '))
+		}
+
+		/**
+		 * 环形饼图：一个整圆按各时间段占的请求数切扇区。
+		 *
+		 * 比例比圆点直观——圆点只能表达「这一格多不多」，扇区直接表达「这段时间占了多少」，
+		 * 一整圈就是窗口内的全部请求。圆心放总数与时间档位，把「一整圈=多少」写清楚。
+		 *
+		 * 扇区是可点的按钮：点一下把这一格固定到下方的明细卡。用 `role="button"` 而不是
+		 * 原生 `<button>`，因为 `<button>` 里塞 SVG 在部分浏览器里会吃掉 pointer 事件。
+		 */
+		function DonutChart(props) {
+			const points = Array.isArray(props.points) ? props.points : []
+			const slices = donutSlices(points)
+			const total = points.reduce((sum, point) => sum + (point.requests ?? 0), 0)
+			const silent = points.filter(point => (point.requests ?? 0) <= 0).length
+			const picked = props.pickKey
+			const scope = props.ranges.find(item => item.id === props.range)?.label ?? ''
+			return h(
+				'div',
+				{ className: 'credits-donut' },
+				h(
+					'div',
+					{ className: 'credits-donut-figure' },
+					h(
+						'svg',
+						{
+							className: 'credits-donut-svg',
+							viewBox: `0 0 ${DONUT_SIZE} ${DONUT_SIZE}`,
+							role: 'group',
+							'aria-label': `${scope}各时间段的请求占比`,
+						},
+						h('circle', { className: 'credits-donut-track', cx: DONUT_SIZE / 2, cy: DONUT_SIZE / 2, r: (DONUT_OUTER + DONUT_INNER) / 2, fill: 'none', stroke: DONUT_TRACK, 'stroke-width': DONUT_OUTER - DONUT_INNER, 'stroke-dasharray': '2 4' }),
+						slices.map(slice =>
+							h('path', {
+								key: slice.point.key,
+								className: 'credits-donut-slice',
+								d: donutSlicePath(slice.startDeg, slice.endDeg),
+								'data-tone': donutTone(slice.point),
+								'data-active': slice.point.key === picked ? 'true' : 'false',
+								role: 'button',
+								tabIndex: 0,
+								'aria-pressed': slice.point.key === picked ? 'true' : 'false',
+								'aria-label': props.titleOf(slice.point),
+								onClick: () => props.onPick?.(slice.point.key === picked ? undefined : slice.point.key),
+								onKeyDown: event => {
+									if (event.key !== 'Enter' && event.key !== ' ') return
+									event.preventDefault()
+									props.onPick?.(slice.point.key === picked ? undefined : slice.point.key)
+								},
+							}, h('title', null, props.titleOf(slice.point))),
+						),
+					),
+					h(
+						'div',
+						{ className: 'credits-donut-center', 'aria-hidden': 'true' },
+						h('span', { className: 'credits-donut-total' }, formatNumber(total)),
+						h('span', { className: 'credits-donut-unit' }, '次请求'),
+						h('span', { className: 'credits-donut-scope' }, scope),
+					),
+				),
+				h(
+					'div',
+					{ className: 'credits-donut-side' },
+					props.legend.map(item =>
+						h(
+							'button',
+							{
+								key: item.key,
+								type: 'button',
+								className: 'credits-donut-legend-item',
+								'data-active': item.key === picked ? 'true' : 'false',
+								'aria-pressed': item.key === picked ? 'true' : 'false',
+								title: item.title,
+								onClick: () => props.onPick?.(item.key === picked ? undefined : item.key),
+							},
+							h('i', { className: 'credits-donut-swatch', 'data-tone': item.tone, style: { background: item.color } }),
+							h('span', { className: 'credits-donut-legend-label' }, item.label),
+							h('span', { className: 'credits-donut-legend-share' }, item.share),
+						),
+					),
+					silent > 0
+						? h('p', { className: 'credits-donut-note' }, `${silent} 个时间段没有请求，不占环上的角度。`)
+						: null,
+				),
+			)
 		}
 
 		/**
@@ -1096,7 +1243,6 @@ window.__ModuleLoader__.load({
 			const range = USAGE_RANGES.some(item => item.id === props.range) ? props.range : DEFAULT_USAGE_RANGE
 			const timelineUnit = USAGE_RANGES.find(item => item.id === range)?.bucket ?? 'day'
 			const timeline = Array.isArray(usage?.timeline) ? usage.timeline : []
-			const maxRequests = timeline.reduce((best, point) => Math.max(best, point.requests ?? 0), 0)
 			const pickKey = props.pickKey
 			const pick = pickKey === undefined ? undefined : timeline.find(point => point.key === pickKey)
 
@@ -1236,42 +1382,31 @@ window.__ModuleLoader__.load({
 								),
 							),
 							timelineSummary(usage.timeline),
-							h(
-								'div',
-								{ className: `credits-dots credits-dots-${timelineUnit}`, role: 'list', 'aria-label': `${{ yesterday: '昨天', today: '今天', week: '近一周', month: '近一个月' }[range]} 请求分布` },
-								usage.timeline.map(point =>
-									h(
-										'button',
-										{
-											key: point.key,
-											type: 'button',
-											role: 'listitem',
-											className: 'credits-dot-slot',
-											title: timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
-											'aria-label': timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
-											onClick: () => props.onPick?.(point.key === pickKey ? undefined : point.key),
-										},
-										h('span', {
-											className: 'credits-dot',
-											'data-tone': timelineTone(point),
-											'data-active': point.key === pickKey ? 'true' : 'false',
-											style: { width: `${dotSize(point.requests, maxRequests)}px`, height: `${dotSize(point.requests, maxRequests)}px` },
-										}),
-									),
-								),
-							),
-							h(
-								'div',
-								{ className: 'credits-dots-axis', 'aria-hidden': 'true' },
-								usage.timeline.map(point =>
-									h('span', { key: point.key, className: 'credits-dots-tick', 'data-fade': isFadedTick(point.label, usage.timeline.length) ? 'true' : 'false' }, point.label),
-								),
-							),
+							h(DonutChart, {
+								range,
+								ranges: USAGE_RANGES,
+								points: usage.timeline,
+								pickKey,
+								onPick: props.onPick,
+								titleOf: point => timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
+								legend: usage.timeline
+									.filter(point => (point.requests ?? 0) > 0)
+									.sort((a, b) => b.requests - a.requests)
+									.slice(0, DONUT_LEGEND_MAX)
+									.map(point => ({
+										key: point.key,
+										label: point.title ?? point.label,
+										tone: donutTone(point),
+										color: DONUT_TONE_COLORS[donutTone(point)],
+										share: `${Math.round(((point.requests ?? 0) / Math.max(1, usage.timeline.reduce((sum, item) => sum + (item.requests ?? 0), 0))) * 100)}%`,
+										title: timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
+									})),
+							}),
 							pick === undefined
 								? h(
 										'p',
 										{ className: 'credits-hint' },
-										timelineUnit === 'hour' ? '圆点越大请求越多；悬停看这一格的明细，点一下固定在下方。' : '圆点越大请求越多；悬停看当天明细，点一下固定在下方。',
+										'扇区按各时间段的请求数分整圈的角度；悬停看这一段的明细，点一下固定在下方。',
 									)
 								: h(
 										'div',
