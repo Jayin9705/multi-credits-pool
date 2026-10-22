@@ -15,7 +15,7 @@ import { accountFromLogin, beginLogin, forgetLogin, pollLogin } from './auth.js'
 import { pluginConfigFile, readPluginConfig, visibleModelsOf } from './plugin-config.js'
 import { DEFAULT_CHECKIN_MINUTE } from './schedule.js'
 import { DEFAULT_STRATEGY, isStrategy } from './rotation.js'
-import { aggregateUsage, readUsage, USAGE_WINDOW_DAYS } from './usage.js'
+import { aggregateUsage, normalizeUsageRange, readUsage, USAGE_WINDOW_DAYS } from './usage.js'
 
 export const WEB_BASE_PATH = '/plugins/multi-credits-pool'
 
@@ -33,6 +33,20 @@ function hostIsLoopback(host) {
   if (typeof host !== 'string') return false
   const name = host.split(':')[0] ?? ''
   return name === '127.0.0.1' || name === 'localhost' || name === '[::1]' || name === '::1'
+}
+
+/**
+ * 从 URL 的 `?range=` 取看板时间档。
+ *
+ * 认不出的值交给 `normalizeUsageRange` 退回默认档，不报 400——档位是纯展示参数，
+ * 为一个拼错的查询串让整页 500 更糟。
+ */
+function usageRangeOf(url) {
+  try {
+    return normalizeUsageRange(new URL(url ?? '/', 'http://127.0.0.1').searchParams.get('range') ?? undefined)
+  } catch {
+    return normalizeUsageRange(undefined)
+  }
 }
 
 function originIsLoopback(origin) {
@@ -175,9 +189,12 @@ export function createWebApi(options) {
   const attempts = new Map()
   let cache = { at: 0, value: undefined }
 
-  async function buildState() {
+  async function buildState(options = {}) {
     const now = Date.now()
-    if (cache.value !== undefined && now - cache.at < STATE_CACHE_MS) return cache.value
+    // 按时间看板的档位跟着请求走，所以缓存键里带上档位：同一档位 15 秒内复用，
+    // 换档立刻重算，读的是同一份流水。
+    const range = normalizeUsageRange(options.range)
+    if (cache.value !== undefined && cache.range === range && now - cache.at < STATE_CACHE_MS) return cache.value
     const accounts = accountsOf()
     const status = await collectStatus(accounts, { balance: true })
     const config = readPluginConfig()
@@ -217,7 +234,7 @@ export function createWebApi(options) {
       rotation: options.rotationState?.(status.rows),
       // 对话固定：键是会话标识（`prompt_cache_key:<sessionId>`），值是账号 id。
       pins: options.pinsOf?.() ?? readPins(),
-      usage: aggregateUsage(readUsage(), { days: USAGE_WINDOW_DAYS, now }),
+      usage: aggregateUsage(readUsage(), { days: USAGE_WINDOW_DAYS, now, range }),
       status: {
         date: status.date,
         month: status.month,
@@ -226,12 +243,12 @@ export function createWebApi(options) {
       },
       recent: recentEntries(accounts),
     }
-    cache = { at: now, value }
+    cache = { at: now, value, range }
     return value
   }
 
   const dropCache = () => {
-    cache = { at: 0, value: undefined }
+    cache = { at: 0, value: undefined, range: undefined }
     options.invalidate?.()
   }
 
@@ -367,7 +384,8 @@ export function createWebApi(options) {
   async function handleState(req, res) {
     if (!hostIsLoopback(req.headers.host)) return json(res, 403, { error: 'Host 必须是回环地址' })
     try {
-      return json(res, 200, await buildState())
+      const range = usageRangeOf(req.url)
+      return json(res, 200, await buildState({ range }))
     } catch (error) {
       logger?.error?.('[multi-credits-pool] 读取状态失败', error)
       return json(res, 500, { error: messageOf(error) })

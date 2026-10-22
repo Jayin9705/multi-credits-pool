@@ -49,6 +49,26 @@ window.__ModuleLoader__.load({
 		]
 
 		/**
+		 * 按时间看板的四个档位。
+		 *
+		 * `bucket` 决定每一格代表多久：昨天与今天按小时切，近一周与近一个月按天切。
+		 * 档位只影响「按时间」那张卡片，其余统计仍按 7 天窗口算——两者口径不同，
+		 * 卡片头上的文案各自写明，免得读者拿两种数字互相对照。
+		 */
+		const USAGE_RANGES = [
+			{ id: 'yesterday', label: '昨天', bucket: 'hour', hint: '昨天 00:00 到 23:59，每格一小时' },
+			{ id: 'today', label: '今天', bucket: 'hour', hint: '今天 00:00 到现在，每格一小时' },
+			{ id: 'week', label: '近一周', bucket: 'day', hint: '含今天的最近 7 天，每格一天' },
+			{ id: 'month', label: '近一个月', bucket: 'day', hint: '含今天的最近 30 天，每格一天' },
+		]
+
+		const DEFAULT_USAGE_RANGE = 'week'
+
+		/** 圆点直径区间（px）：最小要能点中，最大不把一行撑得太高。 */
+		const DOT_MIN_PX = 10
+		const DOT_MAX_PX = 22
+
+		/**
 		 * 四种账号调用方式。`hint` 写清代价——切换模式会改变上游缓存命中率，
 		 * 用户点之前要知道自己在换什么。
 		 */
@@ -284,10 +304,31 @@ window.__ModuleLoader__.load({
 .credits-model-dot{flex:none;width:6px;height:6px;border-radius:2px}
 .credits-model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:132px}
 .credits-model-count{font-variant-numeric:tabular-nums;color:var(--credits-fg2)}
-.credits-daily{display:flex;align-items:flex-end;gap:6px;height:72px;padding-top:4px}
-.credits-daily-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px}
-.credits-daily-bar{width:100%;max-width:26px;border-radius:4px 4px 2px 2px;background:color-mix(in oklab,var(--credits-brand) 62%,transparent);transition:height .3s ease}
-.credits-daily-k{font-size:9.5px;line-height:12px;color:var(--credits-fg3);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---------- 按时间：圆点时间轴 ---------- */
+.credits-ranges{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:999px;background:color-mix(in oklab,var(--credits-fg) 5%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--credits-line) 70%,transparent)}
+.credits-range{border:0;background:transparent;padding:3px 9px;border-radius:999px;font-size:11px;line-height:15px;color:var(--credits-fg3);cursor:pointer;transition:color .15s ease,background .15s ease}
+.credits-range:hover:not([data-active="true"]){color:var(--credits-fg);background:color-mix(in oklab,var(--credits-fg) 7%,transparent)}
+.credits-range[data-active="true"]{color:var(--credits-fg);background:var(--credits-card);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--credits-line) 90%,transparent)}
+.credits-dots-summary{white-space:nowrap}
+.credits-dots{display:flex;align-items:center;justify-content:space-between;gap:2px;padding:10px 2px 2px;min-height:30px}
+.credits-dots-hour{overflow-x:auto;scrollbar-width:thin}
+.credits-dot-slot{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;padding:2px;border:0;background:transparent;cursor:pointer;border-radius:999px}
+.credits-dots-hour .credits-dot-slot{flex:0 0 auto;width:20px}
+.credits-dot{display:block;border-radius:999px;transition:box-shadow .15s ease,opacity .15s ease;background:var(--credits-brand)}
+.credits-dot[data-tone="ok"]{background:var(--credits-brand)}
+.credits-dot[data-tone="warn"]{background:var(--credits-warn)}
+.credits-dot[data-tone="bad"]{background:var(--credits-bad)}
+.credits-dot[data-tone="empty"]{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in oklab,var(--credits-line) 95%,transparent)}
+.credits-dot-slot:hover .credits-dot{opacity:.82}
+.credits-dot[data-active="true"]{box-shadow:0 0 0 2px var(--credits-card),0 0 0 3.5px color-mix(in oklab,var(--credits-fg) 45%,transparent)}
+.credits-dots-axis{display:flex;justify-content:space-between;gap:2px;font-size:9.5px;line-height:12px;color:var(--credits-fg3);font-variant-numeric:tabular-nums}
+.credits-dots-tick{flex:1 1 0;min-width:0;text-align:center;white-space:nowrap}
+.credits-dots-tick[data-fade="true"]{opacity:0}
+.credits-dots-hour .credits-dots-axis{overflow:hidden}
+.credits-dots-hour .credits-dots-tick{flex:0 0 auto;width:20px}
+.credits-dot-detail{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 9px;border-radius:8px;background:color-mix(in oklab,var(--credits-fg) 4%,transparent);font-size:11px;line-height:16px;color:var(--credits-fg2)}
+.credits-dot-detail-title{font-size:11.5px;font-weight:600;color:var(--credits-fg);font-variant-numeric:tabular-nums}
 
 /* ---------- 对话头部账号选择 ---------- */
 .credits-pick{position:relative;display:inline-flex;font-size:12px}
@@ -411,8 +452,10 @@ window.__ModuleLoader__.load({
 			return body
 		}
 
-		function loadState() {
-			return call('/state')
+		function loadState(range) {
+			// 档位只影响「按时间」那张卡片，跟着查询串走：换了档下一次拉状态就带回新档位。
+			const query = USAGE_RANGES.some(item => item.id === range) ? `?range=${encodeURIComponent(range)}` : ''
+			return call(`/state${query}`)
 		}
 
 		/**
@@ -442,8 +485,8 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 拉一份最新状态并广播；调用方拿到的就是刚广播的那份。 */
-		async function loadSharedState() {
-			const next = await loadState()
+		async function loadSharedState(range) {
+			const next = await loadState(range)
 			publishState(next)
 			return next
 		}
@@ -980,6 +1023,62 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 按时间看板的圆点直径。
+		 *
+		 * 按面积正比缩放：人眼比的是圆的面积而不是直径，直接拿请求数乘直径会让
+		 * 「两倍请求」看起来像四五倍。取平方根就等于让面积线性于请求数，最小值
+		 * 兜住「只有一两次请求」的格子，否则点会小到点不中。
+		 */
+		function dotSize(requests, max) {
+			if (max <= 0 || requests <= 0) return DOT_MIN_PX
+			const ratio = Math.min(1, requests / max)
+			return Math.round(DOT_MIN_PX + (DOT_MAX_PX - DOT_MIN_PX) * Math.sqrt(ratio))
+		}
+
+		/**
+		 * 圆点配色。
+		 *
+		 * 有失败但没过半给琥珀、过半给红色：这里只回答「这一天稳不稳」，具体的失败
+		 * 次数在悬停与固定明细里。没有数据的天给空心态，保留格位，读者才知道那天
+		 * 确实没请求，而不是被截掉了。
+		 */
+		function timelineTone(point) {
+			if (point.requests <= 0) return 'empty'
+			if (point.failed <= 0) return 'ok'
+			return point.failed * 2 >= point.requests ? 'bad' : 'warn'
+		}
+
+		/** 圆点的悬停与读屏文案：这一格是什么时候、几次、失败几次、多少 token。 */
+		function timelineTitle(point, unit, withModels) {
+			const when = point.title ?? point.label
+			if (point.requests <= 0) return `${when}：没有请求`
+			const parts = [`${formatNumber(point.requests)} 次`]
+			if (point.failed > 0) parts.push(`失败 ${formatNumber(point.failed)} 次（换号重试记在各自账号上）`)
+			parts.push(`入 ${formatNumber(point.promptTokens)} 出 ${formatNumber(point.completionTokens)}`)
+			if (withModels === true && Array.isArray(point.models) && point.models.length === 1) parts.push(point.models[0].model)
+			return `${when} · ${parts.join(' · ')}`
+		}
+
+		/** 小时档的刻度太密，只给整点留字，其余留空但占位。 */
+		function isFadedTick(label, count) {
+			if (count <= 12) return false
+			const hour = Number.parseInt(String(label), 10)
+			if (!Number.isFinite(hour)) return false
+			return hour % 6 !== 0
+		}
+
+		/** 卡片头上那句汇总：窗口内几次、失败几次、最忙的一格是多少。 */
+		function timelineSummary(points) {
+			const requests = points.reduce((sum, point) => sum + (point.requests ?? 0), 0)
+			const failed = points.reduce((sum, point) => sum + (point.failed ?? 0), 0)
+			const busy = points.reduce((best, point) => (point.requests > (best?.requests ?? -1) ? point : best), undefined)
+			const parts = [`${formatNumber(requests)} 次`]
+			if (failed > 0) parts.push(`失败 ${formatNumber(failed)} 次`)
+			if (busy !== undefined && busy.requests > 0) parts.push(`最多 ${busy.title ?? busy.label} ${formatNumber(busy.requests)} 次`)
+			return h('span', { className: 'credits-aside credits-dots-summary' }, parts.join(' · '))
+		}
+
+		/**
 		 * 使用看板：按账号 × 模型看请求落在谁身上。
 		 *
 		 * 数据来自代理进程每次请求落的一行流水（`src/usage.js`）。这里只做聚合后的
@@ -994,6 +1093,12 @@ window.__ModuleLoader__.load({
 			const total = typeof usage?.total === 'number' ? usage.total : 0
 			const failed = typeof usage?.failed === 'number' ? usage.failed : 0
 			const days = typeof usage?.days === 'number' ? usage.days : 0
+			const range = USAGE_RANGES.some(item => item.id === props.range) ? props.range : DEFAULT_USAGE_RANGE
+			const timelineUnit = USAGE_RANGES.find(item => item.id === range)?.bucket ?? 'day'
+			const timeline = Array.isArray(usage?.timeline) ? usage.timeline : []
+			const maxRequests = timeline.reduce((best, point) => Math.max(best, point.requests ?? 0), 0)
+			const pickKey = props.pickKey
+			const pick = pickKey === undefined ? undefined : timeline.find(point => point.key === pickKey)
 
 			if (accounts.length === 0) {
 				return h(
@@ -1101,28 +1206,96 @@ window.__ModuleLoader__.load({
 						),
 					),
 				),
-				Array.isArray(usage?.daily) && usage.daily.length > 1
+				Array.isArray(usage?.timeline) && usage.timeline.length > 0
 					? h(
 							'div',
 							{ className: 'credits-card' },
 							h(
 								'div',
 								{ className: 'credits-card-head' },
-								h('h2', { className: 'credits-label' }, '按天'),
-								h('span', { className: 'credits-aside' }, '请求数'),
-							),
-							h(
-								'div',
-								{ className: 'credits-daily' },
-								usage.daily.map(day =>
-									h(
-										'div',
-										{ key: day.day, className: 'credits-daily-col', title: `${day.day}：${formatNumber(day.requests)} 次` },
-										h('span', { className: 'credits-daily-bar', style: { height: `${Math.max(4, Math.round((day.requests / Math.max(1, ...usage.daily.map(item => item.requests))) * 100))}%` } }),
-										h('span', { className: 'credits-daily-k' }, String(day.day).slice(5)),
+								h('h2', { className: 'credits-label' }, '按时间'),
+								h(
+									'div',
+									{ className: 'credits-ranges', role: 'radiogroup', 'aria-label': '按时间看板的时间范围' },
+									USAGE_RANGES.map(item =>
+										h(
+											'button',
+											{
+												key: item.id,
+												type: 'button',
+												role: 'radio',
+												'aria-checked': item.id === range ? 'true' : 'false',
+												className: 'credits-range',
+												'data-active': item.id === range ? 'true' : 'false',
+												title: item.hint,
+												onClick: () => props.onRange?.(item.id),
+											},
+											item.label,
+										),
 									),
 								),
 							),
+							timelineSummary(usage.timeline),
+							h(
+								'div',
+								{ className: `credits-dots credits-dots-${timelineUnit}`, role: 'list', 'aria-label': `${{ yesterday: '昨天', today: '今天', week: '近一周', month: '近一个月' }[range]} 请求分布` },
+								usage.timeline.map(point =>
+									h(
+										'button',
+										{
+											key: point.key,
+											type: 'button',
+											role: 'listitem',
+											className: 'credits-dot-slot',
+											title: timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
+											'aria-label': timelineTitle(point, timelineUnit, Boolean(usage.daily?.length)),
+											onClick: () => props.onPick?.(point.key === pickKey ? undefined : point.key),
+										},
+										h('span', {
+											className: 'credits-dot',
+											'data-tone': timelineTone(point),
+											'data-active': point.key === pickKey ? 'true' : 'false',
+											style: { width: `${dotSize(point.requests, maxRequests)}px`, height: `${dotSize(point.requests, maxRequests)}px` },
+										}),
+									),
+								),
+							),
+							h(
+								'div',
+								{ className: 'credits-dots-axis', 'aria-hidden': 'true' },
+								usage.timeline.map(point =>
+									h('span', { key: point.key, className: 'credits-dots-tick', 'data-fade': isFadedTick(point.label, usage.timeline.length) ? 'true' : 'false' }, point.label),
+								),
+							),
+							pick === undefined
+								? h(
+										'p',
+										{ className: 'credits-hint' },
+										timelineUnit === 'hour' ? '圆点越大请求越多；悬停看这一格的明细，点一下固定在下方。' : '圆点越大请求越多；悬停看当天明细，点一下固定在下方。',
+									)
+								: h(
+										'div',
+										{ className: 'credits-dot-detail' },
+										h('span', { className: 'credits-dot-detail-title' }, pick.title ?? pick.label),
+										h('span', { className: 'credits-aside' }, `${formatNumber(pick.requests)} 次`),
+										pick.failed > 0 ? h(Badge, { tone: 'warn', title: '按账号尝试计：一次对话换号重试会各记一次' }, `失败 ${formatNumber(pick.failed)}`) : null,
+										h('span', { className: 'credits-aside' }, `入 ${formatNumber(pick.promptTokens)} 出 ${formatNumber(pick.completionTokens)}`),
+										(pick.models ?? []).length === 0
+											? null
+											: h(
+													'span',
+													{ className: 'credits-usage-models' },
+													pick.models.map((model, index) =>
+														h(
+															'span',
+															{ key: model.model, className: 'credits-model', title: `${model.model}：${formatNumber(model.requests)} 次` },
+															h('i', { className: 'credits-model-dot', style: { background: MODEL_COLORS[index % MODEL_COLORS.length] } }),
+															h('span', { className: 'credits-model-name' }, shortModel(model.model)),
+															h('span', { className: 'credits-model-count' }, formatNumber(model.requests)),
+														),
+													),
+												),
+									),
 						)
 					: null,
 			)
@@ -1303,7 +1476,9 @@ window.__ModuleLoader__.load({
 
 		/* ================= 状态 ================= */
 
-		function usePanelState() {
+		function usePanelState(options = {}) {
+			// 首屏就要按当前档位取数据，否则第一帧永远是默认档的时间轴。
+			const initialRange = options.range
 			const [state, setState] = react.useState(undefined)
 			const [error, setError] = react.useState(undefined)
 			const [busy, setBusy] = react.useState(false)
@@ -1312,9 +1487,9 @@ window.__ModuleLoader__.load({
 			const [autoCheckin, setAutoCheckin] = react.useState(true)
 			const [timeText, setTimeText] = react.useState(minuteText(600))
 
-			const refresh = react.useCallback(async () => {
+			const refresh = react.useCallback(async nextRange => {
 				try {
-					const next = await loadSharedState()
+					const next = await loadSharedState(nextRange)
 					setState(next)
 					setAutoCheckin(next.config.autoCheckin === true)
 					setTimeText(minuteText(next.config.minuteOfDay))
@@ -1327,7 +1502,7 @@ window.__ModuleLoader__.load({
 			}, [])
 
 			react.useEffect(() => {
-				void refresh()
+				void refresh(initialRange)
 			}, [refresh])
 
 			// 后台静默刷新：只换数据，不点亮 busy，所以不会打断正在做的操作。
@@ -1335,6 +1510,18 @@ window.__ModuleLoader__.load({
 				const timer = setInterval(() => void refresh(), AUTO_REFRESH_MS)
 				return () => clearInterval(timer)
 			}, [refresh])
+
+			// 换档要重新拉状态：时间轴由服务端按档位铺格，前端只负责画。
+			// 首屏那次已经按档位取过数，这里跳过；但档位从面板传进来、且面板自己拉
+			// 数据时用的也是同一个档位，所以两边不会打架。
+			const firstRangeSkipped = react.useRef(false)
+			react.useEffect(() => {
+				if (firstRangeSkipped.current === false) {
+					firstRangeSkipped.current = true
+					return
+				}
+				void refresh(options.range)
+			}, [options.range, refresh])
 
 			// 提示条自己退场：留着它反而挡住了下一次操作的结果。
 			react.useEffect(() => {
@@ -1489,7 +1676,9 @@ window.__ModuleLoader__.load({
 		 */
 		function MultiCreditsPoolPanel(props) {
 			const wide = props?.variant === 'panel'
-			const data = usePanelState()
+			// 预览与断言只做一次静态渲染，拿不到换成「近一周」之后的第二次响应，所以
+			// 首屏直接按请求的档位去拿数据；交互里换档仍走 refresh(range)。
+			const data = usePanelState({ range: USAGE_RANGES.some(item => item.id === props?.initialRange) ? props.initialRange : DEFAULT_USAGE_RANGE })
 			const status = data.state?.status
 			const totals = status?.totals
 			const rows = status?.rows ?? []
@@ -1505,9 +1694,20 @@ window.__ModuleLoader__.load({
 			const [renaming, setRenaming] = react.useState(
 				typeof props?.initialRename === 'string' ? { id: props.initialRename, draft: rows.find(row => row.id === props.initialRename)?.label } : undefined,
 			)
+			// 「按时间」卡片的两处交互状态：选中的档位、点开的格子。放这里而不是卡片里，
+			// 是因为换页签回来要保留住用户刚选的档位。
+			const [range, setRange] = react.useState(USAGE_RANGES.some(item => item.id === props?.initialRange) ? props.initialRange : DEFAULT_USAGE_RANGE)
+			const [pickKey, setPickKey] = react.useState(
+				typeof props?.initialPick === 'string' ? props.initialPick : undefined,
+			)
 			const toggle = react.useCallback(id => {
 				setRenaming(undefined)
 				setExpanded(current => (current === id ? undefined : id))
+			}, [])
+			const changeRange = react.useCallback(id => {
+				setRange(id)
+				// 换档以后旧的格子 key 在新时间轴上多半不存在，留着会出现一张空明细。
+				setPickKey(undefined)
 			}, [])
 			const startRename = row => setRenaming({ id: row.id, draft: row.label ?? '' })
 			const cancelRename = () => setRenaming(undefined)
@@ -1604,7 +1804,7 @@ window.__ModuleLoader__.load({
 			} else if (tab === 'auto') {
 				body = h('div', { className: 'credits-in', style: { display: 'flex', flexDirection: 'column', gap: 10 } }, h(Automation, { data }))
 			} else if (tab === 'usage') {
-				body = h(UsageBoard, { usage: data.state?.usage, rows })
+				body = h(UsageBoard, { usage: data.state?.usage, rows, range, onRange: changeRange, pickKey, onPick: setPickKey })
 			} else {
 				body = h(
 					'div',

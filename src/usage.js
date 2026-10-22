@@ -23,6 +23,36 @@ export const USAGE_WINDOW_DAYS = 7
 export const USAGE_MAX_MODELS = 12
 export const USAGE_MAX_ACCOUNTS = 12
 
+/**
+ * 看板「按时间」的四个档位。
+ *
+ * 每档只描述两件事：窗口有多长（相对现在的毫秒数），以及把窗口切成多少格。
+ * 昨天与今天是小时格（24 格），近一周与近一个月是整天格——粒度和用户点的那档
+ * 一一对应，不必再猜这一根柱子代表多久。
+ */
+export const USAGE_RANGES = {
+  yesterday: { days: 1, offsetDays: 1, buckets: 24, unit: 'hour', label: '昨天' },
+  today: { days: 1, offsetDays: 0, buckets: 24, unit: 'hour', label: '今天' },
+  week: { days: 7, offsetDays: 0, buckets: 7, unit: 'day', label: '近一周' },
+  month: { days: 30, offsetDays: 0, buckets: 30, unit: 'day', label: '近一个月' },
+}
+
+/** 默认档位：近一周，与旧看板一致。 */
+export const DEFAULT_USAGE_RANGE = 'week'
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** 把 `range` 规整成 `USAGE_RANGES` 里的键；认不出就用默认档。 */
+export function normalizeUsageRange(range) {
+  return typeof range === 'string' && Object.hasOwn(USAGE_RANGES, range) ? range : DEFAULT_USAGE_RANGE
+}
+
+/** UTC+8 的小时序号（0–23）。 */
+function hourOf(iso) {
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? new Date(ms + 8 * 3600 * 1000).getUTCHours() : undefined
+}
+
 function ensureDir() {
   const dir = dataDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -92,6 +122,100 @@ function dayOf(iso) {
   return Number.isFinite(ms) ? utc8Date(ms) : undefined
 }
 
+/** UTC+8 某天的 00:00 对应的毫秒数。 */
+function utc8DayStart(nowMs) {
+  return Math.floor((nowMs + 8 * 3600 * 1000) / DAY_MS) * DAY_MS - 8 * 3600 * 1000
+}
+
+/**
+ * 把一天的 24 小时切成格，返回每格的起始毫秒。
+ *
+ * 「今天」后面的小时还没到，不铺格子——铺出来是一排永远为空的点，读者会以为
+ * 那些时段没在用。
+ */
+function hourSlots(dayStartMs, nowMs) {
+  const slots = []
+  for (let hour = 0; hour < 24; hour += 1) {
+    const startMs = dayStartMs + hour * 3600 * 1000
+    if (startMs > nowMs) break
+    slots.push(startMs)
+  }
+  return slots
+}
+
+/**
+ * 按 `range` 铺出时间轴。
+ *
+ * 每格都带完整的读数（请求、失败、token、模型分布），界面只负责画，不再自己
+ * 拿请求数去反推别的指标——反推出来的失败数和 token 一定对不上。
+ */
+function buildTimeline(rows, range, nowMs) {
+  const spec = USAGE_RANGES[range]
+  const buckets = new Map()
+  const ensure = (key, startMs, label, title) => {
+    let bucket = buckets.get(key)
+    if (bucket === undefined) {
+      bucket = { key, startMs, label, title, requests: 0, failed: 0, promptTokens: 0, completionTokens: 0, models: new Map() }
+      buckets.set(key, bucket)
+    }
+    return bucket
+  }
+
+  const dayStart = utc8DayStart(nowMs - spec.offsetDays * DAY_MS)
+  if (spec.unit === 'hour') {
+    const slots = hourSlots(dayStart, nowMs)
+    for (const startMs of slots) {
+      const hour = Math.round((startMs - dayStart) / 3600_000)
+      const hh = String(hour).padStart(2, '0')
+      ensure(hour, startMs, hh, `${hh}:00–${hh}:59`)
+    }
+  } else {
+    const firstStart = dayStart - (spec.buckets - 1) * DAY_MS
+    for (let index = 0; index < spec.buckets; index += 1) {
+      const startMs = firstStart + index * DAY_MS
+      const day = utc8Date(startMs)
+      ensure(startMs, startMs, day.slice(5), day)
+    }
+  }
+
+  const windowStart = spec.unit === 'hour' ? dayStart : dayStart - (spec.buckets - 1) * DAY_MS
+  const windowEnd = nowMs
+
+  for (const row of rows) {
+    const atMs = Date.parse(row.at)
+    if (!Number.isFinite(atMs) || atMs < windowStart || atMs > windowEnd) continue
+    const model = typeof row.model === 'string' && row.model !== '' ? row.model : 'unknown'
+    const key = spec.unit === 'hour'
+      ? Math.floor((atMs - dayStart) / 3600_000)
+      : utc8DayStart(atMs)
+    const bucket = buckets.get(key)
+    if (bucket === undefined) continue
+    bucket.requests += 1
+    if (row.ok !== true) bucket.failed += 1
+    if (Number.isFinite(row.promptTokens)) bucket.promptTokens += row.promptTokens
+    if (Number.isFinite(row.completionTokens)) bucket.completionTokens += row.completionTokens
+    const modelBucket = bucket.models.get(model) ?? { model, requests: 0, failed: 0 }
+    modelBucket.requests += 1
+    if (row.ok !== true) modelBucket.failed += 1
+    bucket.models.set(model, modelBucket)
+  }
+
+  return [...buckets.values()]
+    .sort((a, b) => a.startMs - b.startMs)
+    .map(bucket => ({
+      key: String(bucket.key),
+      label: bucket.label,
+      title: bucket.title,
+      requests: bucket.requests,
+      failed: bucket.failed,
+      promptTokens: bucket.promptTokens,
+      completionTokens: bucket.completionTokens,
+      models: [...bucket.models.values()]
+        .sort((a, b) => (b.requests - a.requests) || a.model.localeCompare(b.model))
+        .slice(0, USAGE_MAX_MODELS),
+    }))
+}
+
 /**
  * 按「账号 × 模型」聚合。
  *
@@ -102,6 +226,9 @@ export function aggregateUsage(rows, options = {}) {
   const nowMs = options.now ?? Date.now()
   const days = Math.max(1, Math.min(90, Math.floor(options.days ?? USAGE_WINDOW_DAYS)))
   const windowStart = nowMs - days * 24 * 60 * 60 * 1000
+
+  const range = normalizeUsageRange(options.range)
+  const timeline = buildTimeline(rows, range, nowMs)
 
   const byAccount = new Map()
   let total = 0
@@ -180,5 +307,6 @@ export function aggregateUsage(rows, options = {}) {
     latest: latest === undefined ? undefined : new Date(latest).toISOString(),
     accounts,
     daily,
+    timeline,
   }
 }
