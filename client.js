@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
 		const PLUGIN_SETTINGS_SECTION_ID = 'plugin-settings'
 		const PLUGIN_SETTINGS_ITEM_SLOT = 'plugin-settings.item'
 		const PANEL_ID = 'multi-credits-pool-panel'
+		/** 顶栏那颗星指向的仓库：既是源码入口，也是「点亮」的地方。 */
+		const REPO_URL = 'https://github.com/dzdeng7-sudo/multi-credits-pool'
 		const SIDEBAR_ID = 'multi-credits-pool-sidebar'
 		const CONVERSATION_PANEL_ID = 'conversation'
 		/** 对话标题栏右侧的工具位（宿主 client-ui-conversation 声明，session 作用域）。 */
@@ -123,6 +125,14 @@ window.__ModuleLoader__.load({
 .credits-ver{flex:none;padding:0 6px;border-radius:999px;border:1px solid color-mix(in oklab,var(--credits-fg) 20%,transparent);font-size:10px;font-weight:600;line-height:16px;letter-spacing:.04em;color:var(--credits-fg3)}
 .credits-sub{margin:1px 0 0;font-size:11.5px;line-height:1.45;color:var(--credits-fg3);font-variant-numeric:tabular-nums}
 .credits-head-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+/* 星标：胶囊形状与按钮尺寸对齐，但用品牌色描边，让它一眼是「去仓库」而不是又一个操作。 */
+.credits-star{position:relative;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;overflow:hidden;text-decoration:none;white-space:nowrap;font:inherit;font-size:12.5px;font-weight:600;line-height:18px;border:1px solid color-mix(in oklab,var(--credits-brand) 52%,transparent);background:linear-gradient(140deg,color-mix(in oklab,var(--credits-brand) 16%,transparent),transparent 70%);color:var(--credits-brand);transition:transform .18s ease,box-shadow .22s ease,background .22s ease,border-color .22s ease}
+.credits-star:hover{transform:translateY(-1px);border-color:color-mix(in oklab,var(--credits-brand) 72%,transparent);box-shadow:0 0 0 3px color-mix(in oklab,var(--credits-brand) 10%,transparent),0 7px 18px -8px color-mix(in oklab,var(--credits-brand) 70%,transparent)}
+.credits-star:active{transform:translateY(0) scale(.975)}
+.credits-star:focus-visible{outline:2px solid var(--credits-brand);outline-offset:1px}
+.credits-star svg{flex:none;fill:currentColor;transition:transform .5s cubic-bezier(.34,1.56,.64,1)}
+.credits-star:hover svg{transform:rotate(72deg) scale(1.12)}
+.credits-star:active svg{transform:rotate(72deg) scale(.94)}
 
 /* ---------- 按钮 ---------- */
 .credits-btn{appearance:none;font:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:500;line-height:18px;white-space:nowrap;border:1px solid color-mix(in oklab,var(--credits-line) 85%,transparent);background:var(--credits-raise);color:var(--credits-fg2);transition:background .16s ease,border-color .16s ease,color .16s ease,transform .12s ease,box-shadow .16s ease}
@@ -1537,6 +1547,23 @@ window.__ModuleLoader__.load({
 				h(
 					'span',
 					{ className: 'credits-head-actions' },
+					h(
+						'a',
+						{
+							className: 'credits-star',
+							href: REPO_URL,
+							target: '_blank',
+							rel: 'noopener noreferrer',
+							title: '在 GitHub 上打开这个项目，点亮 Star',
+							'aria-label': 'GitHub 上点亮 Star',
+						},
+						h(
+							'svg',
+							{ width: 14, height: 14, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' },
+							h('path', { d: 'M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3-5.8 3 1.1-6.5L2.6 9.4l6.5-.9z' }),
+						),
+						h('span', null, 'Star'),
+					),
 					h(Btn, { disabled: data.busy, spin: data.busy, onClick: () => void data.refresh(), title: '重新读取账号状态' }, data.busy ? '读取中' : '刷新'),
 					h(Btn, { kind: 'primary', disabled: data.busy || rows.length === 0, onClick: () => data.actions.checkinAll() }, wide ? '全部签到' : '签到'),
 					wide && props?.close !== undefined ? h(Btn, { kind: 'icon', onClick: () => props.close(), title: '关闭看板', label: '关闭看板' }, '✕') : null,

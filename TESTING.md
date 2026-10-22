@@ -81,7 +81,7 @@ node --expose-internals tools\model-catalog-test.mjs
 ```
 
 - `tools/web-api-test.mjs`：37 项全过。用真 http 服务器挂上两个 handler 再发请求——状态文档（动作 key、配置、空账号库）、非回环 `Host` 返回 403、缺 key 返回 401、改配置落到 `plugin.json`、越界时刻不写入、非法 JSON 返回 400、未知动作与未知账号返回 400 且带原因；状态文档带显示名、`recent` 数组与当前 `strategy`；`strategy` 动作落盘、回执新模式、触发热切换回调，非法模式返回 400 且不触发回调；模型的 `catalog`/`visibleModels`/`lastRefresh` 进状态文档、`visible-models` 落盘存的是被勾掉的 id 并触发重登记、空勾选被拒且不触发回调、`refresh-models` 的回执与失败回执。
-- `tools/client-test.mjs`：34 项全过。用假 `window.__ModuleLoader__` 与假 react 执行 `client.js`，验模块以包名注册、导出 `name`/`inject`/`apply`、注册 `settings.section` 容器（id `plugin-settings`、子插槽 `plugin-settings.item`）、注册自己的条目，容器已存在时只注册卡片不重复声明容器；中栏看板按 `main` 插槽注册、`key` 为 `multi-credits-pool-panel`、`inject` 面给出 `panel` 形态与关闭回调，关闭后中栏回到对话；侧边栏入口按 `sidebar.footer.action` 注册、id 为 `multi-credits-pool-sidebar`，点一下开看板、再点一下收回对话；对话头部选择器按 `conversation.session.header.utilities` 注册、id 为 `multi-credits-pool-account-picker`、`order` 10、带 `inject` 面；面板标题里出现 `multi-credits-pool`；改名不调用 `window.prompt`、走面板内的输入框。
+- `tools/client-test.mjs`：37 项全过。用假 `window.__ModuleLoader__` 与假 react 执行 `client.js`，验模块以包名注册、导出 `name`/`inject`/`apply`、注册 `settings.section` 容器（id `plugin-settings`、子插槽 `plugin-settings.item`）、注册自己的条目，容器已存在时只注册卡片不重复声明容器；中栏看板按 `main` 插槽注册、`key` 为 `multi-credits-pool-panel`、`inject` 面给出 `panel` 形态与关闭回调，关闭后中栏回到对话；侧边栏入口按 `sidebar.footer.action` 注册、id 为 `multi-credits-pool-sidebar`，点一下开看板、再点一下收回对话；对话头部选择器按 `conversation.session.header.utilities` 注册、id 为 `multi-credits-pool-account-picker`、`order` 10、带 `inject` 面；面板标题里出现 `multi-credits-pool`；改名不调用 `window.prompt`、走面板内的输入框；顶栏星标取自 `REPO_URL` 常量、外链带 `noopener noreferrer`。
 - `tools/effort-fallback-test.mjs`：9 项全过。假上游模拟「带 `reasoning_effort` 就返回 11150、去掉就成功」——验降级重发后返回 200、共发两次、第二次不带档位且其余字段保留；无档位请求只发一次；持续被拒时最多三次并把 400 交给调用方。
 - `tools/chat-request-test.mjs`：81 项全过。先用单元断言验 `prepareChatBody` 的六类改写（`developer` → `system` 且其它角色不动、系统/助手消息开头的 `You are an AI agent powered by DeepSeek Harness.` 换成中性自称而 user 消息与句中同句不动、内容块里的自称同样换掉——包括自称落在第二块、前面隔着空块或中性块、多块各自带自称、数组里的字符串块，系统提示中段那句带产品名的 GUI 说明按整句替换而句号变化/产品名不同时不动、重复出现的全部替换、块内同样处理，`stream` 强制打开、`stream_options` 缺省补齐且已有不覆盖、`max_completion_tokens` 搬到 `max_tokens` 且不覆盖已有的、别名非正整数丢弃、`tool_choice` 的对象/字符串/`none` 三类形态），再验边界（BOM、非 JSON、数组、采样参数与工具定义原样保留、二次整形幂等），最后挂假上游确认链路里上游真收到 `system` 角色、系统提示已无自称与整句指纹、流式字段；另挂一个只会回 400/11128 的假上游，确认被拒时日志里写明消息形状（`system:[text,text] user:string`）且不含正文，回调拿到形状、整份请求体与上游文案。
 
@@ -99,7 +99,7 @@ node tools\ui-test.mjs
 - `tools/rotation-test.mjs`：26 项全过。故障转移的顺序、冷却时长、用量流水落盘，以及上游中途断流时只记一条 `ok:false`、不抛出未捕获异常。
 - `tools/strategy-test.mjs`：31 项全过。四种账号调用方式的选号顺序、热切换后立即生效、非法模式被拒。
 - `tools/pin-usage-test.mjs`：33 项全过。手动固定与自动绑定的优先级、账号删除后固定自动解除、按账号 × 模型的用量聚合。
-- `tools/ui-test.mjs`：78 项全过。渲染 `client.js` 的真组件，断言四个页签、账号卡、分段额度条、使用看板与选择器的结构与文案，以及改名就地编辑（输入框预填当前账号名、保存与取消、被编辑的账号不再显示改名按钮、输入框样式已进样式表）；模型选择卡片按清单铺出勾选框、勾选态与原生 `checkbox` 一致、卡片给出勾选数量与清单更新时刻、没有清单时不铺空列表而提示去更新。
+- `tools/ui-test.mjs`：87 项全过。渲染 `client.js` 的真组件，断言四个页签、账号卡、分段额度条、使用看板与选择器的结构与文案，以及改名就地编辑（输入框预填当前账号名、保存与取消、被编辑的账号不再显示改名按钮、输入框样式已进样式表）、顶栏星标（指向仓库、新窗口打开、星形路径、排在刷新与签到之前、样式用品牌色）；模型选择卡片按清单铺出勾选框、勾选态与原生 `checkbox` 一致、卡片给出勾选数量与清单更新时刻、没有清单时不铺空列表而提示去更新。
 
 ## 过程中发现并修掉的问题
 
@@ -143,6 +143,7 @@ node tools\ui-test.mjs
 | 修好之后又报同一个 11128 | 宿主把系统提示改成按内容块发（数组形态）时，上游逐块校验：自称落在第二块、前面只隔空块或一段中性文字，照样回 400。原先只改第一块文本，于是漏过去；逐块修好之后仍有复现，说明还有没覆盖到的形状 | `neutralizeIdentity` 改成逐块处理（数组里的字符串块也管），`chat-request-test.mjs` 补五条多块断言；被拒时把消息形状写进 `boot.log`（`system:[text,text] user:string`，不含正文），整份请求体落到 `.multi-credits-pool\rejected.json`，下次拿真身复现即可 |
 | 自称修好之后仍然整条被拒 | 上游还按**整句逐字指纹**拦系统提示：那句 `You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names.` 出现在 system 里就回 `11128`，与位置、内容块怎么分无关；少一个句号、换个产品名、把 `Web GUI` 写成 `app` 都能过，说明是特征串比对而非语义规则。真实请求体里它落在第 4750–5000 字符处，17,105 字符的系统提示整条被拒 | 新增 `neutralizeFingerprints`：按 `PRODUCT_NAME` 拼出正则，命中就把整句换成 `The runtime context describes the environment this agent runs in.`，与 `neutralizeIdentity` 共用 `forEachText` 逐块改写；`chat-request-test.mjs` 补九条断言（含句号不同、产品名不同、块内、重复、user 不动、幂等）；用 `rejected.json` 真身重放从 400 变 200 |
 | 改名按钮点了没反应 | 面板原先用 `window.prompt` 取新名字；桌面端窗口不实现它，调用直接返回 `null`，代码随即静默 `return`，按钮看起来是坏的 | 改成展开区内就地编辑（输入框 + 保存/取消，Enter 保存、Esc 取消），草稿存在面板状态里；`ui-test.mjs` 补九项界面断言、`client-test.mjs` 补两项契约断言 |
+| 顶栏缺少去仓库的入口 | 想给项目点 Star 只能自己翻链接 | 顶栏右侧加星标胶囊，地址来自 `client.js` 的 `REPO_URL` 常量，`target="_blank"` 配 `rel="noopener noreferrer"`；`ui-test.mjs` 补九项界面断言、`client-test.mjs` 补三项契约断言 |
 | 模型清单是写死的 | `plugin.json` 首启把 `CN_MODELS` 整体写进文件，之后只读文件，上游新上线的模型永远出不来、下线的也一直留着（`minimax-m3.1-flash` 就这样缺了一版） | 新增 `model-catalog.js` 按 CLI 段解析上游清单，启动 15 秒后与之后每 24 小时刷新一次写回文件并重登记 provider；`CN_MODELS` 降级为首启/离线的兜底，并按上游校准成 19 个；`model-catalog-test.mjs` 31 项钉住解析与写回 |
 | 不能只显示自己常用的模型 | provider profile 的 `models` 就是宿主的可选集合，全量登记把用不到的模型堆进选择器 | `visibleModels` 存被勾掉的 id，登记前过滤；看板「自动化 → 模型选择」给勾选框，改完立刻重登记；全勾掉会被前端与接口各拦一次（空清单会让选择器整条消失） |
 | 清单刷新了，选择器还是旧的 | 登记 provider 走的是启动时读到的那份 `config`，`modelsOf()` 却每次重读文件，两者不同源。真机现象：`boot.log` 里 `catalog-refreshed models=19`，`GET /v1/models` 仍回 16 条旧模型，`hy3-x` 也还在 | 引入进程内 `live` 状态：刷新写回后与勾选变更都更新它，`modelsOf`、重登记用的 profile、卸载时删的 provider 统一从 `live` 取；`plugin-test.mjs` 补两项断言钉住同源 |
