@@ -69,7 +69,7 @@ node --expose-internals tools\developer-role-probe.mjs  # 4 项，验请求体�
 - `tools/upstream-probe.mjs`：直接对上游发一条带 `tools` 的请求，确认回包是 OpenAI 形状的分片——`delta.reasoning_content`、`delta.tool_calls`、`finish_reason: "tool_calls"`、`usage`、`data: [DONE]` 全部出现，说明上游本身就兼容 OpenAI 协议，代理不需要做响应体转换。
 - `tools/proxy-live-test.mjs`：9 项全过。真账号经代理走 `POST /v1/chat/completions`（带 `tools`）返回 200、响应头带出账账号 id、工具调用与思考增量与结束标记原样透传；随后换假上游验证「第一个账号 402 → 自动换第二个账号 → 出账头是 a2、调用顺序 a1,a2、a1 进入冷却」。
 
-另有五组不碰网络的插件层用例：
+另有六组不碰网络的插件层用例：
 
 ```powershell
 $env:ELECTRON_RUN_AS_NODE = '1'
@@ -80,7 +80,7 @@ node --expose-internals tools\chat-request-test.mjs
 node --expose-internals tools\model-catalog-test.mjs
 ```
 
-- `tools/web-api-test.mjs`：37 项全过。用真 http 服务器挂上两个 handler 再发请求——状态文档（动作 key、配置、空账号库）、非回环 `Host` 返回 403、缺 key 返回 401、改配置落到 `plugin.json`、越界时刻不写入、非法 JSON 返回 400、未知动作与未知账号返回 400 且带原因；状态文档带显示名、`recent` 数组与当前 `strategy`；`strategy` 动作落盘、回执新模式、触发热切换回调，非法模式返回 400 且不触发回调；模型的 `catalog`/`visibleModels`/`lastRefresh` 进状态文档、`visible-models` 落盘存的是被勾掉的 id 并触发重登记、空勾选被拒且不触发回调、`refresh-models` 的回执与失败回执。
+- `tools/web-api-test.mjs`：37 项全过。用真 http 服务器挂上三个 handler 再发请求——状态文档（动作 key、配置、空账号库）、非回环 `Host` 返回 403、缺 key 返回 401、改配置落到 `plugin.json`、越界时刻不写入、非法 JSON 返回 400、未知动作与未知账号返回 400 且带原因；状态文档带显示名、`recent` 数组与当前 `strategy`；`strategy` 动作落盘、回执新模式、触发热切换回调，非法模式返回 400 且不触发回调；模型的 `catalog`/`visibleModels`/`lastRefresh` 进状态文档、`visible-models` 落盘存的是被勾掉的 id 并触发重登记、空勾选被拒且不触发回调、`refresh-models` 的回执与失败回执。
 - `tools/client-test.mjs`：37 项全过。用假 `window.__ModuleLoader__` 与假 react 执行 `client.js`，验模块以包名注册、导出 `name`/`inject`/`apply`、注册 `settings.section` 容器（id `plugin-settings`、子插槽 `plugin-settings.item`）、注册自己的条目，容器已存在时只注册卡片不重复声明容器；中栏看板按 `main` 插槽注册、`key` 为 `multi-credits-pool-panel`、`inject` 面给出 `panel` 形态与关闭回调，关闭后中栏回到对话；侧边栏入口按 `sidebar.footer.action` 注册、id 为 `multi-credits-pool-sidebar`，点一下开看板、再点一下收回对话；对话头部选择器按 `conversation.session.header.utilities` 注册、id 为 `multi-credits-pool-account-picker`、`order` 10、带 `inject` 面；面板标题里出现 `multi-credits-pool`；改名不调用 `window.prompt`、走面板内的输入框；顶栏星标取自 `REPO_URL` 常量、外链带 `noopener noreferrer`。
 - `tools/effort-fallback-test.mjs`：9 项全过。假上游模拟「带 `reasoning_effort` 就返回 11150、去掉就成功」——验降级重发后返回 200、共发两次、第二次不带档位且其余字段保留；无档位请求只发一次；持续被拒时最多三次并把 400 交给调用方。
 - `tools/chat-request-test.mjs`：81 项全过。先用单元断言验 `prepareChatBody` 的六类改写（`developer` → `system` 且其它角色不动、系统/助手消息开头的 `You are an AI agent powered by DeepSeek Harness.` 换成中性自称而 user 消息与句中同句不动、内容块里的自称同样换掉——包括自称落在第二块、前面隔着空块或中性块、多块各自带自称、数组里的字符串块，系统提示中段那句带产品名的 GUI 说明按整句替换而句号变化/产品名不同时不动、重复出现的全部替换、块内同样处理，`stream` 强制打开、`stream_options` 缺省补齐且已有不覆盖、`max_completion_tokens` 搬到 `max_tokens` 且不覆盖已有的、别名非正整数丢弃、`tool_choice` 的对象/字符串/`none` 三类形态），再验边界（BOM、非 JSON、数组、采样参数与工具定义原样保留、二次整形幂等），最后挂假上游确认链路里上游真收到 `system` 角色、系统提示已无自称与整句指纹、流式字段；另挂一个只会回 400/11128 的假上游，确认被拒时日志里写明消息形状（`system:[text,text] user:string`）且不含正文，回调拿到形状、整份请求体与上游文案。
@@ -99,7 +99,7 @@ node tools\ui-test.mjs
 - `tools/rotation-test.mjs`：26 项全过。故障转移的顺序、冷却时长、用量流水落盘，以及上游中途断流时只记一条 `ok:false`、不抛出未捕获异常。
 - `tools/strategy-test.mjs`：31 项全过。四种账号调用方式的选号顺序、热切换后立即生效、非法模式被拒。
 - `tools/pin-usage-test.mjs`：45 项全过。手动固定与自动绑定的优先级、账号删除后固定自动解除、按账号 × 模型的用量聚合；时间轴四个档位的格数与切法（近一周七格、近一个月 30 格、今天按小时且只铺到当前小时、昨天 24 格且不含今天、认不出的档位退回近一周）、每格的请求数与失败数、按模型的分布、超出窗口的旧记录不计入。
-- `tools/ui-test.mjs`：116 项全过。渲染 `client.js` 的真组件，断言四个页签、账号卡、分段额度条、使用看板与选择器的结构与文案，以及改名就地编辑（输入框预填当前账号名、保存与取消、被编辑的账号不再显示改名按钮、输入框样式已进样式表）、顶栏星标（指向仓库、新窗口打开、星形路径、排在刷新与签到之前、样式用品牌色）；模型选择卡片按清单铺出勾选框、勾选态与原生 `checkbox` 一致、卡片给出勾选数量与清单更新时刻、没有清单时不铺空列表而提示去更新；按时间环形饼图十七条：铺出 168×168 的 SVG、有内容的六格各占一段扇区、没有请求的格子不占角度、每段都是内外两条圆弧之间的闭环路径、不再出现按天下拉的柱子、默认近一周、圆心写明总数 148 与档位名、空档有单独交代、环底有浅色虚线、三种色调各就位、扇区带逐段明细悬浮说明、扇区可点可聚焦、图例从多到少排列且最多六条；指定 `initialPick` 时点开的段高亮并在下方展开模型分布；换档六条：四档按钮都带点击处理、点「今天」后按 `?range=today` 重新取数、档位按钮跟着点亮、圆心换成新档位的数字、环上换成新档位的时间格、连点时界面停在最后点的那个档位。
+- `tools/ui-test.mjs`：136 项全过。渲染 `client.js` 的真组件，断言四个页签、账号卡、分段额度条、使用看板与选择器的结构与文案，以及改名就地编辑（输入框预填当前账号名、保存与取消、被编辑的账号不再显示改名按钮、输入框样式已进样式表）、顶栏星标（指向仓库、新窗口打开、星形路径、排在刷新与签到之前、样式用品牌色）；模型选择卡片按清单铺出勾选框、勾选态与原生 `checkbox` 一致、卡片给出勾选数量与清单更新时刻、没有清单时不铺空列表而提示去更新；按时间环形饼图十七条：铺出 168×168 的 SVG、有内容的六格各占一段扇区、没有请求的格子不占角度、每段都是内外两条圆弧之间的闭环路径、不再出现按天下拉的柱子、默认近一周、圆心写明总数 148 与档位名、空档有单独交代、环底有浅色虚线、三种色调各就位、扇区带逐段明细悬浮说明、扇区可点可聚焦、图例从多到少排列且最多六条；指定 `initialPick` 时点开的段高亮并在下方展开模型分布；换档六条：四档按钮都带点击处理、点「今天」后按 `?range=today` 重新取数、档位按钮跟着点亮、圆心换成新档位的数字、环上换成新档位的时间格、连点时界面停在最后点的那个档位。
 
 ## 过程中发现并修掉的问题
 
@@ -151,3 +151,5 @@ node tools\ui-test.mjs
 | 一排圆点看不出各时段占多少 | 圆点只能表达「这格多不多」，说不出「这段时间占了多少」，也没法一眼比出份额 | 改成环形饼图：整圈按各段请求数切扇区，段间留按角度算的缝，圆心写总数与档位，右侧图例从多到少列出占比；没有请求的时段不占角度，另外用一句说明与环底虚线交代；`ui-test.mjs` 补十七条环形断言 |
 | 四个时间档点了效果都一样 | 面板里有两个 `range`：卡片头那个才是用户点的，喂给 `usePanelState` 的却是另一个取常量初值的同名状态。请求串永远是同一个 `?range=`，所以点哪一档回来的都是同一份数据 | 把档位状态提到取数之前，`usePanelState({ range })` 直接吃它；`usePanelState` 里加请求序号，慢回来的旧档响应作废，界面不会被覆盖；`ui-test.mjs` 补六项换档断言（含连点两档） |
 | 改了代码刷新页面没效果 | 宿主把插件模块缓存在进程内（ESM 模块表），磁盘上已换新文件而 `/state` 仍按旧结构返回 | 改完插件要完全退出 DSH 再启动；`/state` 的返回里有没有新字段可作判据（例如时间轴改版后先看 `usage.timeline` 是否出现） |
+| 顶栏按钮加了样式类却不生效 | `Btn` 只把自己认识的属性写进 DOM，调用方传的 `className` 与 `data-*` 全被丢掉，`.credits-update` 这条规则因此永远匹配不上 | `Btn` 透传 `className` 与所有 `data-*`；`ui-test.mjs` 断言样式类真的出现在渲染结果里 |
+| 查更新时同一个按钮渲染两颗 | 提示条与顶栏各写了一遍「查到新版本」的分支，两处条件不完全一致 | 收成一颗按钮两种态（`检查更新` / `可升级 vX`），提示条只在 `updateStale` 时出现 |

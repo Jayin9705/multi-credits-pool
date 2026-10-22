@@ -171,6 +171,13 @@ window.__ModuleLoader__.load({
 .credits-star svg{flex:none;fill:currentColor;transition:transform .5s cubic-bezier(.34,1.56,.64,1)}
 .credits-star:hover svg{transform:rotate(72deg) scale(1.12)}
 .credits-star:active svg{transform:rotate(72deg) scale(.94)}
+/* 有新版本时按钮挪到前面并换成警示色：它比「刷新」「签到」更需要被点。 */
+.credits-update{padding:6px 12px;border-radius:999px;border-color:color-mix(in oklab,var(--credits-warn) 58%,transparent);background:color-mix(in oklab,var(--credits-warn) 14%,transparent);color:var(--credits-warn);font-weight:600}
+.credits-update:hover:not(:disabled){color:var(--credits-warn);border-color:color-mix(in oklab,var(--credits-warn) 78%,transparent);background:color-mix(in oklab,var(--credits-warn) 20%,transparent)}
+.credits-update[data-state="latest"]{border-color:color-mix(in oklab,var(--credits-line) 85%,transparent);background:var(--credits-raise);color:var(--credits-fg3);font-weight:500}
+.credits-update-wrap{display:inline-flex;align-items:center}
+.credits-update-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 11px;border-radius:10px;font-size:12px;line-height:18px;border:1px solid color-mix(in oklab,var(--credits-warn) 34%,transparent);background:color-mix(in oklab,var(--credits-warn) 10%,transparent);color:var(--credits-fg2)}
+.credits-update-cmd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;padding:1px 6px;border-radius:6px;background:color-mix(in oklab,var(--credits-fg) 8%,transparent);user-select:all}
 
 /* ---------- 按钮 ---------- */
 .credits-btn{appearance:none;font:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:500;line-height:18px;white-space:nowrap;border:1px solid color-mix(in oklab,var(--credits-line) 85%,transparent);background:var(--credits-raise);color:var(--credits-fg2);transition:background .16s ease,border-color .16s ease,color .16s ease,transform .12s ease,box-shadow .16s ease}
@@ -483,6 +490,15 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 查 npm 上的最新版本。
+		 *
+		 * `force` 表示用户手点了按钮：跳过宿主侧十分钟的结果缓存，真去问一次注册表。
+		 */
+		function checkUpdate(force) {
+			return call(`/update-check${force === true ? '?force=1' : ''}`)
+		}
+
+		/**
 		 * 看板、侧边栏、对话头三处显示的是同一份状态，必须一处刷新处处同步。
 		 *
 		 * 各自 `useEffect` 拉一次的做法只在挂载时正确：看板刷新完侧边栏还是旧数字，
@@ -649,11 +665,18 @@ window.__ModuleLoader__.load({
 
 		function Btn(props) {
 			const extra = props.kind === 'primary' ? ' credits-btn-primary' : props.kind === 'ghost' ? ' credits-btn-ghost' : props.kind === 'icon' ? ' credits-btn-icon' : props.kind === 'danger' ? ' credits-btn-danger' : ''
+			// `className` 与 `data-*` 由调用方补：同一个按钮在不同位置上要各自的样式钩子。
+			const own = typeof props.className === 'string' && props.className !== '' ? ` ${props.className}` : ''
+			const data = {}
+			for (const key of Object.keys(props)) {
+				if (key.startsWith('data-')) data[key] = props[key]
+			}
 			return h(
 				'button',
 				{
 					type: 'button',
-					className: `credits-btn${extra}`,
+					className: `credits-btn${extra}${own}`,
+					...data,
 					disabled: props.disabled === true,
 					onClick: props.onClick,
 					title: props.title,
@@ -1618,6 +1641,8 @@ window.__ModuleLoader__.load({
 			const [error, setError] = react.useState(undefined)
 			const [busy, setBusy] = react.useState(false)
 			const [notice, setNotice] = react.useState(undefined)
+			// 检查更新的结果：`undefined` 表示还没查过，不显示任何版本信息。
+			const [update, setUpdate] = react.useState(undefined)
 			const [login, setLogin] = react.useState(undefined)
 			const [autoCheckin, setAutoCheckin] = react.useState(true)
 			const [timeText, setTimeText] = react.useState(minuteText(600))
@@ -1695,6 +1720,27 @@ window.__ModuleLoader__.load({
 			const key = state?.actionKey
 
 			const actions = {
+			 /**
+			  * 检查 npm 上有没有新版。
+			 *
+			 * 这里不下载、不替换代码：插件文件正被宿主进程用着，换不掉。所以只查版本号，
+			 * 有新版本就把升级命令亮给用户——命令本身会关掉宿主再装，装完重启即生效。
+			 * 查不到远端（断网、注册表抽风）只提示一句，不当作错误弹红。
+			 */
+				checkUpdate: () =>
+					withBusy(async () => {
+						let result
+						try {
+							result = await call('/update-check?force=1')
+						} catch (failure) {
+							setNotice(`检查更新失败：${failure instanceof Error ? failure.message : String(failure)}`)
+							return
+						}
+						setUpdate(result)
+						if (result.updateAvailable === true) setNotice(`发现新版本 ${result.latest}，按下面的命令升级`)
+						else if (typeof result.latest === 'string') setNotice(`已是最新版本 ${result.current}`)
+						else setNotice('没查到远端版本，稍后再试')
+					}),
 				checkin: id =>
 					withBusy(async () => {
 						const result = await act(key, { action: 'checkin', id })
@@ -1798,7 +1844,7 @@ window.__ModuleLoader__.load({
 				}
 			}, [login, key, refresh])
 
-			return { state, error, busy, notice, login, setLogin, autoCheckin, setAutoCheckin, timeText, setTimeText, refresh, actions }
+			return { state, error, busy, notice, update, login, setLogin, autoCheckin, setAutoCheckin, timeText, setTimeText, refresh, actions }
 		}
 
 		/* ================= 骨架屏 ================= */
@@ -1829,6 +1875,17 @@ window.__ModuleLoader__.load({
 			// 档位要喂给取数：`usePanelState` 按这个值重新拉状态，时间轴由服务端按档位铺格。
 			// 这里传常量的话四个按钮点下去都只会拿到同一份时间轴。
 			const data = usePanelState({ range })
+			// `initialUpdate` 只给预览与断言用：静态渲染不会自己点一次「检查更新」。
+			const [updatePreview, setUpdatePreview] = react.useState(
+				props?.initialUpdate === undefined ? undefined : props.initialUpdate,
+			)
+			// 面板顶栏读的是这两处的并集：手点的结果优先，其次才是夹具给的那份。
+			const updateInfo = data.update ?? updatePreview
+			// 点击后把结果并进预览，避免「点了却什么都没变」。
+			const checkUpdate = react.useCallback(() => {
+				setUpdatePreview(undefined)
+				return data.actions.checkUpdate()
+			}, [data.actions])
 			const status = data.state?.status
 			const totals = status?.totals
 			const rows = status?.rows ?? []
@@ -1871,6 +1928,8 @@ window.__ModuleLoader__.load({
 
 			const firstLoad = data.state === undefined && data.error === undefined
 			const allSigned = totals !== undefined && totals.accounts > 0 && totals.checkedIn === totals.accounts
+			// 有新版本时按钮换成警示色：升级比刷新账号状态更要紧。
+			const updateStale = updateInfo?.updateAvailable === true
 
 			const head = h(
 				'div',
@@ -1882,7 +1941,7 @@ window.__ModuleLoader__.load({
 					h(
 						'div',
 						null,
-						h('h1', { className: 'credits-name' }, PANEL_TITLE, h('span', { className: 'credits-ver' }, 'v2')),
+						h('h1', { className: 'credits-name' }, PANEL_TITLE, h('span', { className: 'credits-ver' }, typeof updateInfo?.current === 'string' ? `v${updateInfo.current}` : 'v2')),
 						h(
 							'p',
 							{ className: 'credits-sub' },
@@ -1912,6 +1971,17 @@ window.__ModuleLoader__.load({
 						),
 						h('span', null, 'Star'),
 					),
+					// 一个按钮两种态：平时是「检查更新」，查到新版本就直接写成「可升级 vX」，
+					// 用户不用先点一下才知道要升级。文案在窄栏里要短，所以只留版本号。
+					h(Btn, {
+						kind: 'ghost',
+						className: 'credits-update',
+						'data-state': updateStale ? 'stale' : 'latest',
+						disabled: data.busy,
+						spin: data.busy,
+						onClick: () => void checkUpdate(),
+						title: updateStale ? `发现新版本 v${updateInfo.latest}，点击查看升级命令` : '检查 npm 上有没有新版本',
+					}, data.busy ? '检查中' : updateStale ? `可升级 v${updateInfo.latest}` : '检查更新'),
 					h(Btn, { disabled: data.busy, spin: data.busy, onClick: () => void data.refresh(), title: '重新读取账号状态' }, data.busy ? '读取中' : '刷新'),
 					h(Btn, { kind: 'primary', disabled: data.busy || rows.length === 0, onClick: () => data.actions.checkinAll() }, wide ? '全部签到' : '签到'),
 					wide && props?.close !== undefined ? h(Btn, { kind: 'icon', onClick: () => props.close(), title: '关闭看板', label: '关闭看板' }, '✕') : null,
@@ -1938,6 +2008,18 @@ window.__ModuleLoader__.load({
 					),
 				),
 			)
+
+			// 有新版本时在标签栏下面横一条：命令可以直接选中复制，不用去翻文档。
+			const updateNote =
+				updateInfo?.updateAvailable === true
+					? h(
+							'div',
+							{ className: 'credits-update-note', role: 'status' },
+							h('span', null, `有新版本 ${updateInfo.latest}（当前 ${updateInfo.current ?? '未知'}），在终端执行：`),
+							h('code', { className: 'credits-update-cmd' }, updateInfo.command ?? `multi-credits-pool update --to ${updateInfo.latest}`),
+							h('span', null, '装完重启 DSH 生效'),
+						)
+					: null
 
 			let body
 			if (firstLoad) {
@@ -2015,7 +2097,7 @@ window.__ModuleLoader__.load({
 				h(
 					'div',
 					{ className: 'credits-body' },
-					h('div', { className: 'credits-sticky' }, head, tabs),
+					h('div', { className: 'credits-sticky' }, head, tabs, updateNote),
 					data.error === undefined ? null : h(Toast, { kind: 'error' }, data.error),
 					data.notice === undefined ? null : h(Toast, null, data.notice),
 					body,

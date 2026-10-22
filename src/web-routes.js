@@ -15,6 +15,7 @@ import { accountFromLogin, beginLogin, forgetLogin, pollLogin } from './auth.js'
 import { pluginConfigFile, readPluginConfig, visibleModelsOf } from './plugin-config.js'
 import { DEFAULT_CHECKIN_MINUTE } from './schedule.js'
 import { DEFAULT_STRATEGY, isStrategy } from './rotation.js'
+import { createUpdateChecker } from './update-check.js'
 import { aggregateUsage, normalizeUsageRange, readUsage, USAGE_WINDOW_DAYS } from './usage.js'
 
 export const WEB_BASE_PATH = '/plugins/multi-credits-pool'
@@ -54,6 +55,16 @@ function originIsLoopback(origin) {
   try {
     const url = new URL(origin)
     return hostIsLoopback(url.host)
+  } catch {
+    return false
+  }
+}
+
+/** `?force=1` 表示「用户手点的检查」，跳过结果缓存。 */
+function updateForceOf(url) {
+  try {
+    const value = new URL(url ?? '/', 'http://127.0.0.1').searchParams.get('force')
+    return value === '1' || value === 'true'
   } catch {
     return false
   }
@@ -187,6 +198,8 @@ export function createWebApi(options) {
   const logger = options.logger
   const actionKey = randomBytes(24).toString('hex')
   const attempts = new Map()
+  // 检查更新是面板顶栏那个按钮的事：注册表只在点的时候问一次，结果缓存十分钟。
+  const checkUpdate = options.checkUpdate ?? createUpdateChecker()
   let cache = { at: 0, value: undefined }
 
   async function buildState(options = {}) {
@@ -411,7 +424,25 @@ export function createWebApi(options) {
     }
   }
 
-  return { actionKey, handleState, handleAction }
+  /**
+   * 检查更新。
+   *
+   * 与 `state` 不同的两点：不受状态缓存影响（用户点按钮就是要真问一次），
+   * 且 `?force=1` 时跳过十分钟的结果缓存。读不到远端不算错误——看板照常渲染，
+   * 只是不显示「有新版本」。
+   */
+  async function handleUpdateCheck(req, res) {
+    if (!hostIsLoopback(req.headers.host)) return json(res, 403, { error: 'Host 必须是回环地址' })
+    const force = updateForceOf(req.url)
+    try {
+      return json(res, 200, await checkUpdate(force))
+    } catch (error) {
+      logger?.error?.('[multi-credits-pool] 检查更新失败', error)
+      return json(res, 500, { error: messageOf(error) })
+    }
+  }
+
+  return { actionKey, handleState, handleAction, handleUpdateCheck }
 }
 
 /**
@@ -422,6 +453,7 @@ export function registerWebApi(ctx, options) {
   const mounts = [
     { kind: 'exact', path: `${WEB_BASE_PATH}/state`, handler: api.handleState },
     { kind: 'exact', path: `${WEB_BASE_PATH}/action`, handler: api.handleAction },
+    { kind: 'exact', path: `${WEB_BASE_PATH}/update-check`, handler: api.handleUpdateCheck },
   ]
   const disposes = []
   for (const mount of mounts) {

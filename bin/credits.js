@@ -32,6 +32,7 @@ import {
   wrapperExists,
 } from '../src/scheduler-task.js'
 import { deleteAccount, findAccount, listAccounts, patchAccount, upsertAccount } from '../src/store.js'
+import { cmdUpdate, installedInProfile } from '../src/self-update.js'
 import {
   collectStatus,
   pendingAccounts,
@@ -76,6 +77,8 @@ const HELP = `multi-credits-pool — 多账号 WorkBuddy 签到与积分汇总 v
   report [--out 文件.md] [--json]  完整汇总报告
 
 其它
+  update [--check] [--to 版本] [--registry URL] [--dry-run]
+        升级到 npm 上的新版本（先完全退出 DSH）
   where                        显示数据目录
   help                         本帮助
 
@@ -84,6 +87,7 @@ const HELP = `multi-credits-pool — 多账号 WorkBuddy 签到与积分汇总 v
   multi-credits-pool login --global --label 国际号
   multi-credits-pool checkin
   multi-credits-pool report --out 汇总.md
+  multi-credits-pool update --check
 `
 
 /** 极简参数解析：--key value / --key / 位置参数。 */
@@ -374,6 +378,8 @@ async function main(argv) {
       console.log(`数据目录：${dataDir()}`)
       console.log(`账号库：  ${accountsFile()}`)
       return 0
+    case 'update':
+      return await cmdUpdate(flags)
     case 'pending':
       console.log(pendingAccounts(listAccounts()).map(a => a.id).join('\n'))
       return 0
