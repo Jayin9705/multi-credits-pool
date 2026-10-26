@@ -22,6 +22,7 @@ import { registerWebApi } from './web-routes.js'
 import { isPastUtc8Time } from './protocol.js'
 import { checkedInToday } from './store.js'
 import { appendUsage } from './usage.js'
+import { isReasoningEfforts } from './reasoning.js'
 
 export const name = 'llm-multi-credits-pool'
 
@@ -118,6 +119,9 @@ export function buildProfile(config, baseUrl) {
     const entry = { id: model.id }
     if (typeof model.name === 'string' && model.name !== '') entry.name = model.name
     if (Number.isInteger(model.maxTokens)) entry.maxTokens = model.maxTokens
+    // 推理等级随模型一起登记，模型选择器才会给出这一档下拉。宿主只认
+    // `false` 或非空字典，老缓存里没有这个字段就整个不写。
+    if (isReasoningEfforts(model.reasoningEfforts)) entry.reasoningEfforts = model.reasoningEfforts
     return entry
   })
   return {

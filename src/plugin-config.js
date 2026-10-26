@@ -13,6 +13,15 @@ import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { dataDir } from './paths.js'
 import { DEFAULT_STRATEGY, isStrategy } from './rotation.js'
+import { fillKnownEfforts, reasoningEffortsOf } from './reasoning.js'
+
+/**
+ * 兜底清单里的等级声明：上游给的是 `supportedEfforts` 数组，登记给宿主时写成
+ * `{ 档位: 档位 }`，请求体里的 `reasoning_effort` 就用这个原值。
+ */
+function efforts(...levels) {
+  return reasoningEffortsOf({ supportedEfforts: levels })
+}
 
 export const PLUGIN_CONFIG_BASENAME = 'plugin.json'
 
@@ -29,34 +38,34 @@ export const DEFAULT_PLUGIN_PORT = 34610
  * {@link fetchModelCatalog} 每天拉的那份，这里只保证模型选择器不会空着。
  */
 export const CN_MODELS = [
-  { id: 'auto', name: 'Auto', contextWindow: 256_000, maxTokens: 32_000 },
-  { id: 'hy4-preview', name: 'Hy4 preview', contextWindow: 960_000, maxTokens: 64_000 },
-  { id: 'hy3', name: 'Hy3', contextWindow: 192_000, maxTokens: 64_000 },
-  { id: 'step-5-preview', name: 'Step-5-Preview', contextWindow: 1_000_000, maxTokens: 64_000 },
-  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxTokens: 64_000 },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072 },
-  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxTokens: 64_000 },
-  { id: 'glm-5.1', name: 'GLM-5.1', contextWindow: 200_000, maxTokens: 48_000 },
-  { id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', contextWindow: 200_000, maxTokens: 64_000 },
-  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxTokens: 32_000 },
-  { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', contextWindow: 1_000_000, maxTokens: 64_000 },
-  { id: 'kimi-k2.7', name: 'Kimi-K2.7-Code', contextWindow: 256_000, maxTokens: 32_000 },
-  { id: 'kimi-k2.6', name: 'Kimi-K2.6', contextWindow: 256_000, maxTokens: 32_000 },
-  { id: 'minimax-m3.1-flash', name: 'MiniMax-M3.1-Flash', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 512_000, maxTokens: 64_000 },
-  { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'mimo-v2.6-pro', name: 'Xiaomi MiMo-V2.6-Pro', contextWindow: 1_000_000, maxTokens: 128_000 },
+  { id: 'auto', name: 'Auto', contextWindow: 256_000, maxTokens: 32_000, reasoningEfforts: efforts('high') },
+  { id: 'hy4-preview', name: 'Hy4 preview', contextWindow: 960_000, maxTokens: 64_000, reasoningEfforts: efforts('high') },
+  { id: 'hy3', name: 'Hy3', contextWindow: 192_000, maxTokens: 64_000, reasoningEfforts: efforts('high') },
+  { id: 'step-5-preview', name: 'Step-5-Preview', contextWindow: 1_000_000, maxTokens: 64_000, reasoningEfforts: efforts('low', 'medium', 'high') },
+  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxTokens: 128_000, reasoningEfforts: efforts('low', 'medium', 'high', 'xhigh', 'max') },
+  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxTokens: 128_000, reasoningEfforts: efforts('low', 'high', 'max') },
+  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxTokens: 64_000, reasoningEfforts: efforts('low', 'high', 'max') },
+  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072, reasoningEfforts: efforts('low', 'high', 'max') },
+  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxTokens: 64_000, reasoningEfforts: efforts('medium') },
+  { id: 'glm-5.1', name: 'GLM-5.1', contextWindow: 200_000, maxTokens: 48_000, reasoningEfforts: efforts('medium') },
+  { id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', contextWindow: 200_000, maxTokens: 64_000, reasoningEfforts: efforts('medium') },
+  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxTokens: 32_000, reasoningEfforts: efforts('medium') },
+  { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', contextWindow: 1_000_000, maxTokens: 64_000, reasoningEfforts: efforts('low', 'high', 'max') },
+  { id: 'kimi-k2.7', name: 'Kimi-K2.7-Code', contextWindow: 256_000, maxTokens: 32_000, reasoningEfforts: efforts('medium') },
+  { id: 'kimi-k2.6', name: 'Kimi-K2.6', contextWindow: 256_000, maxTokens: 32_000, reasoningEfforts: efforts('medium') },
+  { id: 'minimax-m3.1-flash', name: 'MiniMax-M3.1-Flash', contextWindow: 1_000_000, maxTokens: 128_000, reasoningEfforts: efforts('low', 'medium', 'high', 'xhigh', 'max') },
+  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 512_000, maxTokens: 64_000, reasoningEfforts: efforts('medium') },
+  { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', contextWindow: 1_000_000, maxTokens: 128_000, reasoningEfforts: efforts('low', 'high', 'max') },
+  { id: 'mimo-v2.6-pro', name: 'Xiaomi MiMo-V2.6-Pro', contextWindow: 1_000_000, maxTokens: 128_000, reasoningEfforts: efforts('high') },
 ]
 
 /** 国际站 CLI 模型清单。 */
 export const GLOBAL_MODELS = [
-  { id: 'default-model', name: 'Auto', contextWindow: 176_000, maxTokens: 24_000 },
-  { id: 'fast-model', name: 'Fast', contextWindow: 200_000, maxTokens: 32_000 },
-  { id: 'balanced-model', name: 'Balanced', contextWindow: 256_000, maxTokens: 32_000 },
-  { id: 'primary-model', name: 'Primary', contextWindow: 272_000, maxTokens: 72_000 },
-  { id: 'deep-model', name: 'Deep', contextWindow: 176_000, maxTokens: 24_000 },
+  { id: 'default-model', name: 'Auto', contextWindow: 176_000, maxTokens: 24_000, reasoningEfforts: efforts('high') },
+  { id: 'fast-model', name: 'Fast', contextWindow: 200_000, maxTokens: 32_000, reasoningEfforts: efforts('medium') },
+  { id: 'balanced-model', name: 'Balanced', contextWindow: 256_000, maxTokens: 32_000, reasoningEfforts: efforts('medium') },
+  { id: 'primary-model', name: 'Primary', contextWindow: 272_000, maxTokens: 72_000, reasoningEfforts: efforts('medium') },
+  { id: 'deep-model', name: 'Deep', contextWindow: 176_000, maxTokens: 24_000, reasoningEfforts: efforts('high') },
 ]
 
 /** 旧版本用过的显示名，读到就换成现名，避免老 plugin.json 把旧名字带回来。 */
@@ -139,6 +148,9 @@ export function peekPluginConfig(file = pluginConfigFile()) {
   }
   const merged = { ...defaults, ...stored }
   if (!Array.isArray(merged.models) || merged.models.length === 0) merged.models = defaults.models
+  // 老缓存里没有推理等级声明：按已知 id 补一份，免得升级后要等下一次清单刷新
+  // 才能在模型选择器里看到档位。
+  merged.models = fillKnownEfforts(merged.models)
   if (typeof merged.secret !== 'string' || merged.secret.length < 16) merged.secret = defaults.secret
   merged.providerId = providerIdOf(merged.providerId, defaults.providerId)
   merged.displayName = displayNameOf(merged.displayName, defaults.displayName)
@@ -179,6 +191,7 @@ export function readPluginConfig(file = pluginConfigFile()) {
 
   const merged = { ...defaults, ...stored }
   if (!Array.isArray(merged.models) || merged.models.length === 0) merged.models = defaults.models
+  merged.models = fillKnownEfforts(merged.models)
   if (!Array.isArray(merged.visibleModels)) merged.visibleModels = defaults.visibleModels
   merged.visibleModels = merged.visibleModels.filter(id => typeof id === 'string' && id !== '')
   if (!Number.isInteger(merged.catalogAt) || merged.catalogAt < 0) merged.catalogAt = 0

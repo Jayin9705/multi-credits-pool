@@ -5,7 +5,7 @@
  * `/v3/config`），它有两段：
  *
  * - `data.models`：每个模型的元数据（`maxInputTokens` / `maxOutputTokens` / 名称 /
- *   是否禁用等）。
+ *   是否禁用 / `reasoning` 能力声明等）。
  * - `data.agents[]` 里 `name === 'cli'` 那一条的 `models` 数组：CLI 真正可用的模型 id，
  *   且带顺序。顺序是产品排定的推荐次序，不该按字母或对象键序重排。
  *
@@ -13,6 +13,7 @@
  * 模型不属于 CLI 通道，不登记。
  */
 import { chatBaseOf, chatHeaders, JSON_TIMEOUT_MS, stripBom } from './protocol.js'
+import { reasoningEffortsOf } from './reasoning.js'
 
 /** 官方 CLI 的模型清单地址：国内站与其它站的路径不同。 */
 export const CATALOG_PATH = {
@@ -62,11 +63,14 @@ export function parseModelCatalog(document) {
     const contextWindow = positive(entry.maxInputTokens) ? entry.maxInputTokens : 0
     const maxTokens = positive(entry.maxOutputTokens) ? entry.maxOutputTokens : 0
     if (contextWindow <= 0 || maxTokens <= 0) continue
+    const efforts = reasoningEffortsOf(entry.reasoning)
     byId.set(entry.id, {
       id: entry.id,
       name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : entry.id,
       contextWindow,
       maxTokens,
+      // 没有档位声明的模型不带这个字段：宿主看到空字典会判配置非法。
+      ...(efforts === undefined ? {} : { reasoningEfforts: efforts }),
     })
   }
   const models = []

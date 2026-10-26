@@ -64,6 +64,7 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 - **模型轮换**：装进 DSH profile 后作为一个 provider 出现，多个账号的额度按所选方式自动选用，单个账号额度耗尽或登录态失效时无感换下一个。
 - **模型清单跟着上游走**：模型列表不再手写——启动 15 秒后从上游取一次，之后每 24 小时一次，缓存在 `plugin.json`。上游新上线的模型下一次刷新就出现在选择器里，下线的自动消失。
 - **只显示要用的模型**：看板「自动化 → 模型选择」里勾选哪些模型出现在 DSH 的模型选择器里，改完立刻生效；卡片头部显示清单上次更新时刻，旁边可手动刷新。至少留一个。
+- **能选推理等级**：模型支持推理时，DSH 的模型选择器里会多出等级下拉（`low` / `medium` / `high` / `xhigh` / `max`）。档位来自上游声明，不经插件猜测；升级后按已知档位先补一次，不用等清单刷新。
 - **半路没额度也不至于停**：换账号只发生在响应开始之前；流已经开始之后才断的，由宿主按 provider 的重试策略重发，重发时欠费账号已进 6 小时冷却，于是落到下一个账号。上下文由宿主带着原样重发，不丢。
 - **升级有提示**：看板顶栏的「检查更新」问一次 npm 注册表（结果缓存 10 分钟），查到新版本就变成「可升级 vX.Y.Z」并在标签栏下给出一条命令，复制到终端执行 `multi-credits-pool update` 即可；面板不替自己换代码，运行中的文件被宿主拿着。
 - **四种账号调用方式**：在看板上切换，改完立刻生效、不用重启。每个按钮悬停即显示该模式的完整说明，不必先选中再看解释。
@@ -91,7 +92,7 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\smoke.ps1
 ```
 
-在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回，31 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，37 项）、`tools/ui-test.mjs`（界面渲染断言，136 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，45 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，81 项）、`tools/update-check-test.mjs`（检查更新与安装参数，41 项，不联网）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）与 `tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）。
+在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回、推理等级，46 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，37 项）、`tools/ui-test.mjs`（界面渲染断言，136 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，45 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，81 项）、`tools/update-check-test.mjs`（检查更新与安装参数，41 项，不联网）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）、`tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）与 `tools/reasoning-live-probe.mjs`（逐个档位实发，确认声明与上游一致）。
 
 调界面时用 `node tools\preview.mjs --shot` 生成八个预览页并截成 PNG，落在 `tools/`，不装插件也能看排版；README 里引用的那组在 `docs/screenshots/`。
 

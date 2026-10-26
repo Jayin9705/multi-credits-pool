@@ -55,14 +55,17 @@ node --expose-internals tools\paths-test.mjs
 
 `paths-test.mjs` 16 项全部通过（退出码 0）。在临时 `DSH_HOME` 下造 profile，验数据目录定位：无声明者时退回 `DSH_PROFILE`、单个声明者优先、多个声明者取联接指向本包的那个（都对不上取第一个，不返回空）、`DSH_MULTI_CREDITS_POOL_DATA_DIR` 覆盖一切，以及 `accounts.json` / `checkin-log.jsonl` / `usage-log.jsonl` / `pins.json` / 锁文件名拼接；另加旧目录迁移三项：`.dsh-workbuddy-multi` 被搬到 `.multi-credits-pool`、账号文件跟着搬过来、搬完旧目录不再原地留存。
 
-另有两项不依赖宿主启动的连通性验证，都在真账号上跑过：
+另有三项不依赖宿主启动的连通性验证，都在真账号上跑过：
 
 ```powershell
 $env:ELECTRON_RUN_AS_NODE = '1'
 node --expose-internals tools\upstream-probe.mjs   # 1 条请求，验上游协议
 node --expose-internals tools\proxy-live-test.mjs  # 9 项，验代理链路
 node --expose-internals tools\developer-role-probe.mjs  # 4 项，验请求体整形
+node --expose-internals tools\reasoning-live-probe.mjs  # 逐档实发，验推理等级
 ```
+
+- `tools/reasoning-live-probe.mjs`：把清单里每个模型的每个声明档位实发一次（`max_tokens` 64、单条提问），19 个模型 38 个档位全部 200。档位表与上游能力对得上，不是抄来的。
 
 - `tools/developer-role-probe.mjs`：4 项全过。同一份带 `developer` 角色的请求体发两遍——直连上游被 `400` / `11128` 拒掉，经代理返回 200 与正常分片，是「请求体整形」结论的实测依据。
 
@@ -85,7 +88,7 @@ node --expose-internals tools\model-catalog-test.mjs
 - `tools/effort-fallback-test.mjs`：9 项全过。假上游模拟「带 `reasoning_effort` 就返回 11150、去掉就成功」——验降级重发后返回 200、共发两次、第二次不带档位且其余字段保留；无档位请求只发一次；持续被拒时最多三次并把 400 交给调用方。
 - `tools/chat-request-test.mjs`：81 项全过。先用单元断言验 `prepareChatBody` 的六类改写（`developer` → `system` 且其它角色不动、系统/助手消息开头的 `You are an AI agent powered by DeepSeek Harness.` 换成中性自称而 user 消息与句中同句不动、内容块里的自称同样换掉——包括自称落在第二块、前面隔着空块或中性块、多块各自带自称、数组里的字符串块，系统提示中段那句带产品名的 GUI 说明按整句替换而句号变化/产品名不同时不动、重复出现的全部替换、块内同样处理，`stream` 强制打开、`stream_options` 缺省补齐且已有不覆盖、`max_completion_tokens` 搬到 `max_tokens` 且不覆盖已有的、别名非正整数丢弃、`tool_choice` 的对象/字符串/`none` 三类形态），再验边界（BOM、非 JSON、数组、采样参数与工具定义原样保留、二次整形幂等），最后挂假上游确认链路里上游真收到 `system` 角色、系统提示已无自称与整句指纹、流式字段；另挂一个只会回 400/11128 的假上游，确认被拒时日志里写明消息形状（`system:[text,text] user:string`）且不含正文，回调拿到形状、整份请求体与上游文案。
 
-- `tools/model-catalog-test.mjs`：31 项全过。`parseModelCatalog` 按 `agents.cli.models` 的顺序输出、只登记 CLI 段、`maxInputTokens`/`maxOutputTokens` 映射成 `contextWindow`/`maxTokens`、缺名字退回 id、`disabled` 与缺上限的条目被跳过、六种拿不到清单时返回 `undefined`；`visibleModelsOf` 的空集合登记全部、勾掉的被过滤、全勾掉时退回完整清单；`writeModelCatalog` 写回清单并记录时间与区域、清掉已不存在的隐藏 id、保留密钥；旧 `plugin.json` 读进来能补出新字段。
+- `tools/model-catalog-test.mjs`：46 项全过。`parseModelCatalog` 按 `agents.cli.models` 的顺序输出、只登记 CLI 段、`maxInputTokens`/`maxOutputTokens` 映射成 `contextWindow`/`maxTokens`、缺名字退回 id、`disabled` 与缺上限的条目被跳过、六种拿不到清单时返回 `undefined`；`visibleModelsOf` 的空集合登记全部、勾掉的被过滤、全勾掉时退回完整清单；`writeModelCatalog` 写回清单并记录时间与区域、清掉已不存在的隐藏 id、保留密钥；旧 `plugin.json` 读进来能补出新字段；推理等级的上游三种形状（富声明 / 只有默认档 / 不是对象）、宿主认可的两种声明形状、`fillKnownEfforts` 的补位与不覆盖、登记出去的 profile 里每个模型都带等级、兜底清单与已知表对同一模型的档位一致。
 
 另有三组覆盖轮换、策略与用量的用例：
 
@@ -144,6 +147,7 @@ node tools\ui-test.mjs
 | 自称修好之后仍然整条被拒 | 上游还按**整句逐字指纹**拦系统提示：那句 `You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names.` 出现在 system 里就回 `11128`，与位置、内容块怎么分无关；少一个句号、换个产品名、把 `Web GUI` 写成 `app` 都能过，说明是特征串比对而非语义规则。真实请求体里它落在第 4750–5000 字符处，17,105 字符的系统提示整条被拒 | 新增 `neutralizeFingerprints`：按 `PRODUCT_NAME` 拼出正则，命中就把整句换成 `The runtime context describes the environment this agent runs in.`，与 `neutralizeIdentity` 共用 `forEachText` 逐块改写；`chat-request-test.mjs` 补九条断言（含句号不同、产品名不同、块内、重复、user 不动、幂等）；用 `rejected.json` 真身重放从 400 变 200 |
 | 改名按钮点了没反应 | 面板原先用 `window.prompt` 取新名字；桌面端窗口不实现它，调用直接返回 `null`，代码随即静默 `return`，按钮看起来是坏的 | 改成展开区内就地编辑（输入框 + 保存/取消，Enter 保存、Esc 取消），草稿存在面板状态里；`ui-test.mjs` 补九项界面断言、`client-test.mjs` 补两项契约断言 |
 | 顶栏缺少去仓库的入口 | 想给项目点 Star 只能自己翻链接 | 顶栏右侧加星标胶囊，地址来自 `client.js` 的 `REPO_URL` 常量，`target="_blank"` 配 `rel="noopener noreferrer"`；`ui-test.mjs` 补九项界面断言、`client-test.mjs` 补三项契约断言 |
+| 模型选择器里没有推理等级 | 所有模型只显示一档默认，选不了 `low` / `high` / `max`；上游清单里每条都声明了 `reasoning`，插件解析时把它丢了 | 新增 `reasoning.js`，把上游 `supportedEfforts` 折成宿主 profile 的 `reasoningEfforts`（简形状按默认档登记单一项），`CN_MODELS` 与老 `plugin.json` 一起补；`model-catalog-test.mjs` 46 项钉住 |
 | 模型清单是写死的 | `plugin.json` 首启把 `CN_MODELS` 整体写进文件，之后只读文件，上游新上线的模型永远出不来、下线的也一直留着（`minimax-m3.1-flash` 就这样缺了一版） | 新增 `model-catalog.js` 按 CLI 段解析上游清单，启动 15 秒后与之后每 24 小时刷新一次写回文件并重登记 provider；`CN_MODELS` 降级为首启/离线的兜底，并按上游校准成 19 个；`model-catalog-test.mjs` 31 项钉住解析与写回 |
 | 不能只显示自己常用的模型 | provider profile 的 `models` 就是宿主的可选集合，全量登记把用不到的模型堆进选择器 | `visibleModels` 存被勾掉的 id，登记前过滤；看板「自动化 → 模型选择」给勾选框，改完立刻重登记；全勾掉会被前端与接口各拦一次（空清单会让选择器整条消失） |
 | 清单刷新了，选择器还是旧的 | 登记 provider 走的是启动时读到的那份 `config`，`modelsOf()` 却每次重读文件，两者不同源。真机现象：`boot.log` 里 `catalog-refreshed models=19`，`GET /v1/models` 仍回 16 条旧模型，`hy3-x` 也还在 | 引入进程内 `live` 状态：刷新写回后与勾选变更都更新它，`modelsOf`、重登记用的 profile、卸载时删的 provider 统一从 `live` 取；`plugin-test.mjs` 补两项断言钉住同源 |
