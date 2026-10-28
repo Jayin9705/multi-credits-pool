@@ -4,8 +4,6 @@
 
 模型接入走的是**原生 provider 适配器**：插件直接实现宿主的 `LlmAdapter` 契约，用 `ctx.llm.registerAdapter()` 挂上去。不起本地代理、不开回环端口、不往宿主设置里写 provider 条目——请求从宿主直接进适配器，适配器自己拼上游请求、自己读流、自己产出分片。
 
-模型接入走的是**原生 provider 适配器**：插件直接实现宿主的 `LlmAdapter` 契约，用 `ctx.llm.registerAdapter()` 挂上去。不起本地代理、不开回环端口、不往宿主设置里写 provider 条目——请求从宿主直接进适配器，适配器自己拼上游请求、自己读流、自己产出分片。
-
 纯 ESM JavaScript，零依赖，零构建，要求 Node.js 22.19 及以上（或使用 DSH 桌面版自带运行时）。
 
 ```powershell
