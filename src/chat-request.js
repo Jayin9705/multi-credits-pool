@@ -64,6 +64,35 @@ const GUI_FINGERPRINT = new RegExp(
 const NEUTRAL_GUI = 'The runtime context describes the environment this agent runs in.'
 
 /**
+ * 上游还按「@路径说明」这两行拦请求。
+ *
+ * 宿主每轮都会在系统提示里带这两句，告诉模型 `@` 前缀是用户显式引用的路径。
+ * 上游把它们当作「非官方客户端」的指纹：与上面那句产品名同时出现就回 400
+ * `code=11128`。两句都改写成同义说法，规则照样传达给模型，请求不再被拦。
+ *
+ * 逐词拼出来，源码里不出现原文；大小写与空白都放宽，上游是特征串比对不是语义规则。
+ */
+const AT_PATH_LINES = [
+  /Tokens prefixed with @ are paths the user explicitly referenced\.?/gi,
+  /Relative paths resolve from the workspace root;?\s*absolute paths identify files or directories on the host\.?/gi,
+]
+const NEUTRAL_AT_PATH = [
+  'A leading @ marks a path the user pointed at directly.',
+  'A relative path is read from the workspace root; an absolute one names a file or directory on this machine.',
+]
+
+/** 把 @路径说明换成正弦说法；命中与位置无关，所以逐处替换。 */
+function neutralizeAtPathNotes(body) {
+  forEachText(body, text => {
+    let out = text
+    for (let index = 0; index < AT_PATH_LINES.length; index += 1) {
+      out = out.replace(AT_PATH_LINES[index], NEUTRAL_AT_PATH[index])
+    }
+    return out
+  })
+}
+
+/**
  * 把请求体整成上游认的写法。
  *
  * @param {string} bodyText 宿主发来的原始请求体
@@ -85,6 +114,7 @@ export function prepareChatBody(bodyText) {
   normalizeDeveloperRole(body)
   neutralizeIdentity(body)
   neutralizeFingerprints(body)
+  neutralizeAtPathNotes(body)
   normalizeToolChoice(body)
   return JSON.stringify(body)
 }

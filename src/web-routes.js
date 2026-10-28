@@ -231,7 +231,6 @@ export function createWebApi(options) {
         models: models.length,
         providerId: config.providerId,
         displayName: config.displayName,
-        port: config.port,
         strategy: options.strategyOf?.() ?? config.strategy ?? DEFAULT_STRATEGY,
         // 模型可见性：清单给勾选框，visibleModels 是已勾上的集合，lastRefresh 是上次抓上游的时刻。
         catalog: models.map(model => ({

@@ -2,6 +2,10 @@
 
 多账号 WorkBuddy 工具：管理多个账号的登录凭据、每天自动签到、把各账号的积分与套餐汇总到一张表，并把这些账号的模型额度轮换起来接进 DSH 的模型选择器。
 
+模型接入走的是**原生 provider 适配器**：插件直接实现宿主的 `LlmAdapter` 契约，用 `ctx.llm.registerAdapter()` 挂上去。不起本地代理、不开回环端口、不往宿主设置里写 provider 条目——请求从宿主直接进适配器，适配器自己拼上游请求、自己读流、自己产出分片。
+
+模型接入走的是**原生 provider 适配器**：插件直接实现宿主的 `LlmAdapter` 契约，用 `ctx.llm.registerAdapter()` 挂上去。不起本地代理、不开回环端口、不往宿主设置里写 provider 条目——请求从宿主直接进适配器，适配器自己拼上游请求、自己读流、自己产出分片。
+
 纯 ESM JavaScript，零依赖，零构建，要求 Node.js 22.19 及以上（或使用 DSH 桌面版自带运行时）。
 
 ```powershell
@@ -61,7 +65,7 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 - **每日签到**：按账号逐个签，单账号失败不影响其它账号；今天已签过的自动跳过。
 - **积分汇总**：`status` 看今日签到与各账号剩余积分，`report` 落盘成 Markdown。
 - **两种触发**：`daemon` 常驻进程；`schedule-install` 注册系统计划任务，DSH 没启动也能执行。
-- **模型轮换**：装进 DSH profile 后作为一个 provider 出现，多个账号的额度按所选方式自动选用，单个账号额度耗尽或登录态失效时无感换下一个。
+- **模型轮换**：装进 DSH profile 后作为一个 provider 出现，多个账号的额度按所选方式自动选用，单个账号额度耗尽或登录态失效时无感换下一个。换账号发生在响应开始之前；流已经开始之后才断的，交给宿主按重试策略重发，重发时欠费账号已进冷却，于是落到下一个账号。换账号发生在响应开始之前；流已经开始之后才断的，交给宿主按重试策略重发，重发时欠费账号已进冷却，于是落到下一个账号。
 - **模型清单跟着上游走**：模型列表不再手写——启动 15 秒后从上游取一次，之后每 24 小时一次，缓存在 `plugin.json`。上游新上线的模型下一次刷新就出现在选择器里，下线的自动消失。
 - **只显示要用的模型**：看板「自动化 → 模型选择」里勾选哪些模型出现在 DSH 的模型选择器里，改完立刻生效；卡片头部显示清单上次更新时刻，旁边可手动刷新。至少留一个。
 - **能选推理等级**：模型支持推理时，DSH 的模型选择器里会多出等级下拉（`low` / `medium` / `high` / `xhigh` / `max`）。档位来自上游声明，不经插件猜测；升级后按已知档位先补一次，不用等清单刷新。
@@ -80,6 +84,25 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 - **凭据不回显**：`list --json` 只报「有没有令牌」，不输出令牌内容。
 - **改名后旧数据自动接上**：包名、数据目录、provider id、显示名、计划任务名统一到 `multi-credits-pool`。旧数据目录 `.dsh-workbuddy-multi` 首次启动自动搬过来，模型页里残留的旧 provider 条目会被清掉，`schedule-install` 重新注册时顺带删掉旧名计划任务。
 
+## 模型接入：原生适配器
+
+上一版把模型接进 DSH 的办法是「本地代理 + 写宿主设置」：插件在回环端口上开一个 OpenAI 兼容端点，再把它的地址写进宿主 `llm-pi-ai` 的设置里当一个 provider。能用，但绕：请求要经过一次 HTTP 往返，端口固定（被占用就得改），还要在宿主设置里留一条指向死端口的条目，插件卸载后那条条目得靠下次启动清理。
+
+现在改成宿主原生的适配器接口：
+
+| | 旧：本地代理 | 新：原生适配器 |
+| --- | --- | --- |
+| 接入方式 | 写 `llm-pi-ai` 的 provider 设置 | `ctx.llm.registerAdapter()` |
+| 请求路径 | 宿主 → HTTP → 代理 → 上游 | 宿主 → 适配器 → 上游 |
+| 端口 | 固定 34610，可能被占用 | 没有端口 |
+| 密钥 | 回环 Bearer，要防同机其它进程 | 没有密钥 |
+| 卸载 | 下次启动清理残留 provider 条目 | 随 fiber 一起注销 |
+| 模型清单 | 改设置后重登记 provider | 换掉适配器读的那份数据，发一次拓扑变更 |
+
+适配器要实现的就这几个方法：`providerInfo`（路由显示名）、`providerRetryPolicy`（重试策略）、`listModels`（模型目录）、`resolveModel`（精确模型能力）、`prepareCall`（把元数据与分发绑在同一份快照上）。流式分发返回宿主认识的扁平索引块分片：`block-start` / `text-delta` / `reasoning-delta` / `tool-call-delta` / `block-end` / `usage` / `finish`。
+
+上游专属的请求体整形（`developer` 角色改回 `system`、`max_completion_tokens` 翻成 `max_tokens`、绕开渠道指纹）原样保留，只是从「代理转发前整形」变成「适配器发请求前整形」。
+
 ## 边界
 
 - 走 WorkBuddy 的私有接口（`/v2/billing/meter/daily-checkin`、`/v2/plugin/auth/*`、`/v2/billing/meter/get-user-resource`），上游改协议即失效。
@@ -92,7 +115,7 @@ $exe = 'D:\DeepSeek Harness\DeepSeek Harness.exe'      # 改成自己的安装�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\smoke.ps1
 ```
 
-在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回、推理等级，46 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，37 项）、`tools/ui-test.mjs`（界面渲染断言，136 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，45 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，81 项）、`tools/update-check-test.mjs`（检查更新与安装参数，41 项，不联网）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）、`tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）与 `tools/reasoning-live-probe.mjs`（逐个档位实发，确认声明与上游一致）。
+在临时数据目录（`.credits-test/`）中执行全部命令，不触碰真实账号库：`tools/smoke.ps1`（CLI，31 项）、`tools/plugin-test.mjs`（假宿主跑 `apply()`，45 项，不联网）、`tools/paths-test.mjs`（数据目录定位与旧目录迁移，16 项）、`tools/model-catalog-test.mjs`（上游清单解析与写回、推理等级，46 项）、`tools/web-api-test.mjs`（Web 接口，37 项）、`tools/client-test.mjs`（浏览器半边注册契约，37 项）、`tools/ui-test.mjs`（界面渲染断言，136 项）、`tools/rotation-test.mjs`（故障转移、冷却与使用流水，26 项）、`tools/strategy-test.mjs`（四种账号调用方式，31 项）、`tools/pin-usage-test.mjs`（手动固定与用量聚合，45 项）、`tools/effort-fallback-test.mjs`（推理档位降级，9 项）、`tools/chat-request-test.mjs`（请求体整形，81 项）、`tools/update-check-test.mjs`（检查更新与安装参数，41 项，不联网）、`tools/adapter-test.mjs`（原生适配器与流协议，100 项，不联网）、`tools/kernel-test.mjs`（用真实宿主内核跑注册与一次完整调用，39 项，不联网）、`tools/adapter-test.mjs`（原生适配器与流协议，100 项，不联网）、`tools/kernel-test.mjs`（用真实宿主内核跑注册与一次完整调用，39 项，不联网）。真实链路验收用 `tools/proxy-live-test.mjs`（真账号带工具经代理发一条请求，9 项）、`tools/catalog-live-probe.mjs`（真账号抓一次上游模型清单）与 `tools/reasoning-live-probe.mjs`（逐个档位实发，确认声明与上游一致）。
 
 调界面时用 `node tools\preview.mjs --shot` 生成八个预览页并截成 PNG，落在 `tools/`，不装插件也能看排版；README 里引用的那组在 `docs/screenshots/`。
 

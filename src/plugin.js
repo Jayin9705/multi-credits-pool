@@ -1,45 +1,47 @@
 /**
- * 宿主插件入口：起一个回环的 OpenAI 兼容端点，并把它的地址登记成宿主
- * `llm-pi-ai` 的一个 provider 配置。
+ * 宿主插件入口：把多账号轮换注册成宿主 `llm` 服务的一个原生 provider。
  *
- * 不声明 Config schema，也不 import 任何宿主包 —— 与宿主之间只有两样契约：
- * `ctx.get('settings')` 提供的配置服务，以及 settings 里 `llm-pi-ai` 段的
- * provider profile 形状（api/baseURL/headers/models）。进程内不新增任何
- * 模块依赖，插件可以独立在本机跑自测。
+ * 与上一版的区别是这一版不再起本地代理。旧做法是在回环端口上开一个 OpenAI 兼容
+ * 端点，再把它的地址写进宿主 `llm-pi-ai` 的设置里当一个 provider——请求要绕一圈
+ * HTTP，端口固定、密钥共享、还要在宿主设置里留一条指向死端口的条目。现在适配器
+ * 直接实现宿主的 `LlmAdapter` 契约，用 `ctx.llm.registerAdapter()` 挂上去，模型
+ * 选择器里照样出现「multi-credits-pool」，但中间没有任何端口。
+ *
+ * 与宿主之间只有两样契约：`llm` 服务的适配器注册接口，以及 `webServer`（可选，
+ * 给设置看板用）。不 import 任何宿主包，插件可以独立在本机跑自测。
  */
 import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createChatProxy } from './proxy.js'
-import { createChatUpstream } from './chat-upstream.js'
+import { CreditsPoolAdapter } from './adapter.js'
 import { AccountRotator } from './rotation.js'
 import { listAccounts, patchAccount, readPins } from './store.js'
 import { ensureFresh } from './auth.js'
 import { dataDir } from './paths.js'
-import { readPluginConfig, peekPluginConfig, visibleModelsOf, writeModelCatalog, LEGACY_PROVIDER_IDS } from './plugin-config.js'
+import { readPluginConfig, peekPluginConfig, visibleModelsOf, writeModelCatalog } from './plugin-config.js'
 import { fetchModelCatalog } from './model-catalog.js'
 import { sweep } from './schedule.js'
 import { registerWebApi } from './web-routes.js'
 import { isPastUtc8Time } from './protocol.js'
 import { checkedInToday } from './store.js'
 import { appendUsage } from './usage.js'
-import { isReasoningEfforts } from './reasoning.js'
 
 export const name = 'llm-multi-credits-pool'
 
 /**
- * 只依赖 `settings`。
+ * 只依赖 `llm`。
  *
- * cordis 对服务访问有硬约束：没声明 inject 就读 `ctx.settings` 会直接抛
- * `cannot get property "settings" without inject`，插件当场初始化失败。
- * 声明成注入依赖后，宿主没提供 settings 时插件挂 pending 而不是报错——但
- * 桌面 App 一定先装好 settings 再加载组合包，这条路径是稳的。
+ * cordis 对服务访问有硬约束：没声明 inject 就读 `ctx.llm` 会直接抛
+ * `cannot get property "llm" without inject`，插件当场初始化失败。声明成注入
+ * 依赖后，宿主没提供 llm 时插件挂 pending 而不是报错。
+ *
+ * `webServer` 不在这里声明：它是可选能力，用 `ctx.inject()` 嵌套一个子 fiber 去
+ * 拿。声明成硬依赖会让没有 webServer 的组合（CLI）整个插件都起不来。
  */
-export const inject = ['settings']
+export const inject = ['llm']
 
 /**
  * 启动痕迹：宿主加载本模块、以及调用 apply，各写一行。插件起不来时先看这个
- * 文件——没有 module 行说明包没被导入，有 module 没 apply 说明注入的服务
- * 没就绪，两行都有但没 provider 才是登记环节的问题。
+ * 文件——没有 module 行说明包没被导入，有 module 没 apply 说明注入的服务没就绪。
  */
 function trace(stage) {
   try {
@@ -52,51 +54,11 @@ function trace(stage) {
 
 trace('module-loaded')
 
-/** 宿主的 pi-ai 入口固定用这个 settings 命名空间（dsh-base 的补丁里 id 就是它）。 */
-export const SETTINGS_NS = 'llm-pi-ai'
-
 function pickLogger(ctx) {
   const candidate = ctx?.logger ?? ctx?.get?.('logger')
   if (candidate && typeof candidate.warn === 'function') return candidate
   return console
 }
-
-/**
- * provider profile：形状对齐 llm-pi-ai 的 z.dict(profile) 校验。
- *
- * 对话标识走请求体的 `prompt_cache_key`，不用会话亲和头。宿主只在 openrouter
- * 路由上自动发 `x-client-request-id` 那组头，而 `sendSessionAffinityHeaders`
- * 在 `COMPLETIONS_COMPAT_GATE` 里是 `withhold`——写了就被 `invalid()` 拒绝，
- * 整个 provider 注册失败。能配的只有 `supportsLongCacheRetention`（`offer`）：
- * 配合顶层 `cacheRetention: 'long'`，宿主会把 `prompt_cache_key` 与
- * `prompt_cache_retention: '24h'` 写进请求体，值就是会话 id。
- *
- * `cacheRetention` 缺省是 `short`，那时 body 里不带 `prompt_cache_key`，
- * 「对话固定」会退化成按 LRU 猜测——所以这里必须显式设成 `long`。
- *
- * `retryPolicy` 把欠费类错误码补进可重试列表。宿主默认只重试
- * `EMPTY_RESPONSE` / `RATE_LIMIT` / `SERVER` / `TIMEOUT` / `TRANSPORT`，
- * 欠费落成 `QUOTA`（deepseek 路由是 `ACCOUNT_QUOTA`）时直接判终态，
- * 任务就停在半路。补进来之后，重试会重新进代理，而代理已把欠费账号
- * 打进 6 小时冷却，于是自然换到下一个账号——上下文由宿主重发，不受影响。
- */
-
-/** 宿主默认重试的五个码，加上欠费相关的两个。 */
-export const RETRYABLE_CODES = [
-  'EMPTY_RESPONSE',
-  'RATE_LIMIT',
-  'SERVER',
-  'TIMEOUT',
-  'TRANSPORT',
-  'QUOTA',
-  'ACCOUNT_QUOTA',
-]
-
-/**
- * 重试次数：够走完几个账号，又不至于让一个真的空了的池子卡住十几秒。
- * 退避从 500ms 起翻倍，3 次合计约 3.5 秒。
- */
-export const RETRY_LIMIT = 3
 
 /**
  * 上游清单的刷新间隔：一天一次。
@@ -110,109 +72,24 @@ export const CATALOG_REFRESH_MS = 24 * 60 * 60_000
  * 首次刷新的等待时间：启动时先让 provider 正常登记，再在后台补一次清单。
  *
  * 不放在登记前等，是因为网络慢时会把启动拖到十几秒，模型选择器空着更糟：
- * 先用文件里的缓存登记，刷新成功后再重登记一次。
+ * 先用文件里的缓存登记，刷新成功后再换掉适配器的清单。
  */
 export const CATALOG_FIRST_DELAY_MS = 15_000
 
-export function buildProfile(config, baseUrl) {
-  const models = visibleModelsOf(config).map(model => {
-    const entry = { id: model.id }
-    if (typeof model.name === 'string' && model.name !== '') entry.name = model.name
-    if (Number.isInteger(model.maxTokens)) entry.maxTokens = model.maxTokens
-    // 推理等级随模型一起登记，模型选择器才会给出这一档下拉。宿主只认
-    // `false` 或非空字典，老缓存里没有这个字段就整个不写。
-    if (isReasoningEfforts(model.reasoningEfforts)) entry.reasoningEfforts = model.reasoningEfforts
-    return entry
-  })
-  return {
-    displayName: config.displayName,
-    api: 'openai-completions',
-    baseURL: `${baseUrl}/v1`,
-    headers: { Authorization: `Bearer ${config.secret}` },
-    defaultContextWindow: config.defaultContextWindow,
-    defaultMaxTokens: config.defaultMaxTokens,
-    cacheRetention: 'long',
-    compat: { supportsLongCacheRetention: true },
-    retryPolicy: {
-      mode: 'normal',
-      maxRetries: RETRY_LIMIT,
-      retryableCodes: RETRYABLE_CODES,
-    },
-    models,
-  }
-}
-
 function errorText(error) {
   return error instanceof Error ? error.message : String(error)
-}
-
-async function readSection(settings) {
-  try {
-    return (typeof settings.get === 'function' ? settings.get(SETTINGS_NS) : undefined) ?? {}
-  } catch {
-    return {}
-  }
-}
-
-/**
- * 登记 provider：先试 `mutate`（只动一个叶子节点，不碰其它 provider），
- * 宿主版本不接受这个操作时退回整段 `update`（把现有 providers 合并进去）。
- */
-async function updateProvider(settings, providerId, profile) {
-  const attempts = []
-  if (typeof settings?.mutate === 'function') {
-    try {
-      await settings.mutate(SETTINGS_NS, [{ op: 'set', path: ['providers', providerId], value: profile }])
-      return 'mutate'
-    } catch (error) {
-      attempts.push(`mutate: ${errorText(error)}`)
-    }
-  }
-  if (typeof settings?.update === 'function') {
-    try {
-      const current = await readSection(settings)
-      const providers = { ...(current.providers ?? {}), [providerId]: profile }
-      await settings.update(SETTINGS_NS, { ...current, providers })
-      return 'update'
-    } catch (error) {
-      attempts.push(`update: ${errorText(error)}`)
-    }
-  }
-  throw new Error(attempts.length > 0 ? attempts.join('；') : 'settings 服务没有 mutate/update')
-}
-
-async function removeProvider(settings, providerId) {
-  if (typeof settings?.mutate === 'function') {
-    try {
-      await settings.mutate(SETTINGS_NS, [{ op: 'unset', path: ['providers', providerId] }])
-      return
-    } catch {
-      // 退回整段写
-    }
-  }
-  if (typeof settings?.update !== 'function') return
-  const current = await readSection(settings)
-  const providers = { ...(current.providers ?? {}) }
-  if (!(providerId in providers)) return
-  delete providers[providerId]
-  await settings.update(SETTINGS_NS, { ...current, providers })
 }
 
 /**
  * 插件主函数。异常一律吞掉并记日志：插件起不来时宿主必须照常可用，
  * 用户只是看不到「multi-credits-pool」这一个 provider。
  */
-function resolveSettings(ctx) {
-  const candidate = ctx?.settings
-  return candidate && typeof candidate === 'object' ? candidate : undefined
-}
-
 export function apply(ctx) {
   trace('apply-entered')
   try {
     return applyInner(ctx)
   } catch (error) {
-    const message = `[multi-credits-pool] 初始化失败：${error instanceof Error ? error.message : String(error)}`
+    const message = `[multi-credits-pool] 初始化失败：${errorText(error)}`
     trace(`apply-failed ${message}`)
     pickLogger(ctx).error?.(message)
     console.error(message)
@@ -222,7 +99,13 @@ export function apply(ctx) {
 
 function applyInner(ctx) {
   const logger = pickLogger(ctx)
-  const settings = resolveSettings(ctx)
+  const llm = ctx?.llm
+  if (llm === undefined || typeof llm.registerAdapter !== 'function') {
+    const message = '[multi-credits-pool] 宿主没有提供 llm 服务，provider 不会被登记'
+    trace('llm-missing')
+    logger.warn?.(message)
+    return undefined
+  }
 
   const config = readPluginConfig()
   const rotator = new AccountRotator({ strategy: config.strategy })
@@ -232,35 +115,56 @@ function applyInner(ctx) {
   /**
    * 当前生效的配置：进程启动读的那一份，清单刷新或勾选变更后换成新的。
    *
-   * 代理的模型清单、重登记用的 profile、卸载时删的 provider 都从这里取，保证
-   * `/v1/models` 与登记出去的那份是同一套模型——两者各读各的时候，盘上的清单
-   * 换成了新的、选择器里还是旧的。
+   * 适配器的模型清单从这里取，保证 `/v1/models` 与登记出去的那份是同一套模型。
    */
   let live = config
 
-  const proxy = createChatProxy({
+  const adapter = new CreditsPoolAdapter({
     accountsOf: () => listAccounts(),
-    upstream: createChatUpstream(),
     rotator,
     modelsOf: () => visibleModelsOf(live),
     prepareAccount: account => ensureFresh(account, (id, patch) => patchAccount(id, patch)),
     onUsage: entry => appendUsage(entry),
-    onRejected: ({ shape, body, message }) => {
+    onFailure: ({ shape, body, message }) => {
       // 上游的「非法调用」只看得出请求体不对，正文又不能写进日志：形状进 boot.log，
       // 整份请求体落到 rejected.json，事后能拿真身去复现，不用靠猜。
       trace(`chat-rejected shape=${shape} status=400 ${message}`)
-      // 同一秒里会有两条被拒请求（宿主换连接头重试），直接覆盖写会互相截断，
-      // 写临时文件再改名，落盘的那份永远是完整的一条。
+      // 同一秒里会有两条被拒请求，直接覆盖写会互相截断，写临时文件再改名。
       const target = join(dataDir(), 'rejected.json')
       const draft = `${target}.tmp`
       const record = { at: new Date().toISOString(), shape, message, body }
       writeFileSync(draft, JSON.stringify(record))
       renameSync(draft, target)
     },
-    port: config.port,
-    secret: config.secret,
+    providerId: config.providerId,
+    displayName: config.displayName,
+    defaultContextWindow: config.defaultContextWindow,
+    defaultMaxTokens: config.defaultMaxTokens,
     logger,
   })
+
+  // 注册路由。重复注册同一个路由会以 DUPLICATE_ADAPTER 失败，所以只在启动时注册
+  // 一次；之后换模型清单只是换适配器读的那份数据，不需要重新注册。
+  const registration = llm.registerAdapter([config.providerId], adapter)
+  trace(`adapter-registered ${config.providerId} models=${visibleModelsOf(live).length}`)
+  logger.info?.(
+    `[multi-credits-pool] provider ${config.providerId} 已注册，${visibleModelsOf(live).length} 个模型`,
+  )
+
+  /**
+   * 让宿主的模型选择器跟着清单变化。
+   *
+   * 适配器的 `listModels` 每次被问都读 `live`，所以换掉 `live` 之后宿主下次问就是
+   * 新清单。这里再发一次拓扑变更事件，让已经打开的选择器立刻重读，而不是等用户
+   * 关掉再打开。
+   */
+  const announce = () => {
+    try {
+      registration.replace([config.providerId])
+    } catch (error) {
+      logger.warn?.(`[multi-credits-pool] 通知宿主刷新模型清单失败：${errorText(error)}`)
+    }
+  }
 
   let disposed = false
   let autoRunning = false
@@ -268,14 +172,14 @@ function applyInner(ctx) {
   /**
    * 进程内自动签到：DSH 开着时到点签一次，启动时补当天。
    *
-   * 每分钟看一次开关与签到时刻，用不落盘的 {@link peekPluginConfig} 读配置——设置卡片
-   * 改完立刻生效，不需要重启。已经在今天签过的账号由 sweep 自己跳过。
+   * 每分钟看一次开关与签到时刻，用不落盘的 {@link peekPluginConfig} 读配置——设置
+   * 卡片改完立刻生效，不需要重启。已经在今天签过的账号由 sweep 自己跳过。
    */
   const autoCheckin = async () => {
     if (disposed || autoRunning) return
-    const live = peekPluginConfig()
-    if (live.autoCheckin === false) return
-    const minuteOfDay = Number.isInteger(live.minuteOfDay) ? live.minuteOfDay : 600
+    const current = peekPluginConfig()
+    if (current.autoCheckin === false) return
+    const minuteOfDay = Number.isInteger(current.minuteOfDay) ? current.minuteOfDay : 600
     if (!isPastUtc8Time(minuteOfDay)) return
     const accounts = listAccounts()
     if (accounts.length === 0) return
@@ -285,7 +189,7 @@ function applyInner(ctx) {
       const stats = await sweep({ minuteOfDay, catchUp: true, quiet: true })
       trace(`auto-checkin ${JSON.stringify(stats)}`)
     } catch (error) {
-      logger.warn?.(`[multi-credits-pool] 自动签到失败：${error instanceof Error ? error.message : String(error)}`)
+      logger.warn?.(`[multi-credits-pool] 自动签到失败：${errorText(error)}`)
     } finally {
       autoRunning = false
     }
@@ -297,13 +201,9 @@ function applyInner(ctx) {
 
   /**
    * 策略热更新：设置卡片改完策略立刻生效，不需要重启。
-   *
-   * 顺带补一次余额读数——「优先过期」和「优先用完一个」要看剩余积分与到期日。
-   * 只在设置页打开时才有读数，所以这里顺手按需刷新一次，失败就跳过。
    */
   const syncStrategy = () => {
-    const live = peekPluginConfig()
-    rotator.setStrategy(live.strategy)
+    rotator.setStrategy(peekPluginConfig().strategy)
   }
   const strategyTimer = setInterval(syncStrategy, 60_000)
   if (typeof strategyTimer.unref === 'function') strategyTimer.unref()
@@ -312,8 +212,7 @@ function applyInner(ctx) {
    * 刷新上游模型清单：拿一个可用账号的身份去问服务端，把结果写回 plugin.json。
    *
    * 身份只用来过网关的鉴权，与「谁出账」无关；没有账号就直接跳过——连不上上游时
-   * 清单保持原样，模型选择器仍是上次那份，不会突然空掉。刷新成功后重新登记 provider，
-   * 宿主的模型选择器不用重启就能看到新模型。
+   * 清单保持原样，模型选择器仍是上次那份，不会突然空掉。
    */
   const refreshCatalog = async ({ quiet = false } = {}) => {
     if (disposed) return undefined
@@ -328,18 +227,8 @@ function applyInner(ctx) {
     if (!Array.isArray(models) || models.length === 0) return undefined
     live = writeModelCatalog(models, { region, nowMs: Date.now() })
     trace(`catalog-refreshed models=${models.length} region=${region}`)
-    if (!quiet) {
-      logger.info?.(`[multi-credits-pool] 模型清单已更新（${models.length} 个）`)
-    }
-    // 勾选状态不变的前提下换掉清单，宿主的模型选择器立刻跟着变。
-    if (settings) {
-      try {
-        await updateProvider(settings, live.providerId, buildProfile(live, proxy.baseUrl()))
-        trace(`catalog-registered models=${visibleModelsOf(live).length}`)
-      } catch (error) {
-        logger.warn?.(`[multi-credits-pool] 按新清单重登记 provider 失败：${errorText(error)}`)
-      }
-    }
+    if (!quiet) logger.info?.(`[multi-credits-pool] 模型清单已更新（${models.length} 个）`)
+    announce()
     return models
   }
 
@@ -365,10 +254,9 @@ function applyInner(ctx) {
           logger,
           refreshModels: () => refreshCatalog({ quiet: true }),
           onModelsChange: () => {
-            // 勾选变了就重登记一次：宿主的模型选择器读的是 provider 里的 models。
+            // 勾选变了就换掉适配器读的那份清单，再通知宿主重读。
             live = readPluginConfig()
-            if (settings) void updateProvider(settings, live.providerId, buildProfile(live, proxy.baseUrl()))
-              .catch(error => logger.warn?.(`[multi-credits-pool] 重登记 provider 失败：${errorText(error)}`))
+            announce()
           },
           cooldownOf: accountId => rotator.snapshot().cooldownUntil[accountId],
           strategyOf: () => rotator.strategy,
@@ -390,66 +278,23 @@ function applyInner(ctx) {
         trace('web-api-registered')
       })
     } catch (error) {
-      logger.warn?.(`[multi-credits-pool] 注册 Web 接口失败：${error instanceof Error ? error.message : String(error)}`)
+      logger.warn?.(`[multi-credits-pool] 注册 Web 接口失败：${errorText(error)}`)
     }
   }
 
-  const dispose = async () => {
+  const dispose = () => {
     if (disposed) return
     disposed = true
     clearInterval(autoTimer)
     clearInterval(strategyTimer)
     clearInterval(catalogTimer)
     clearTimeout(catalogFirstTimer)
-    if (settings) {
-      try {
-        await removeProvider(settings, config.providerId)
-      } catch (error) {
-        logger.warn?.(`[multi-credits-pool] 注销 provider 失败：${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-    try {
-      await proxy.close()
-    } catch (error) {
-      logger.warn?.(`[multi-credits-pool] 关闭代理失败：${error instanceof Error ? error.message : String(error)}`)
-    }
+    // 注册随 fiber 一起注销，这里不用手写 removeAdapter：宿主在 fiber dispose 时
+    // 会把这条路由连同它的适配器一起摘掉。
   }
 
   if (typeof ctx.effect === 'function') ctx.effect(() => () => dispose())
-  else if (typeof ctx.on === 'function') ctx.on('dispose', () => void dispose())
+  else if (typeof ctx.on === 'function') ctx.on('dispose', () => dispose())
 
-  void proxy.ready
-    .then(async () => {
-      if (disposed) return
-      if (!settings) {
-        trace('settings-missing')
-        logger.warn?.('[multi-credits-pool] 没有 settings 服务，provider 不会被登记')
-        return
-      }
-      const baseUrl = proxy.baseUrl()
-      const how = await updateProvider(settings, config.providerId, buildProfile(config, baseUrl))
-      trace(`provider-registered ${config.providerId} via=${how} base=${baseUrl} models=${visibleModelsOf(config).length}`)
-      logger.info?.(
-        `[multi-credits-pool] provider ${config.providerId} 已登记（${how}），代理 ${baseUrl}，${visibleModelsOf(config).length} 个模型`,
-      )
-      // 改名前的 provider 条目留在设置里就是一个指向旧端口的死 provider，
-      // 每次启动顺手删掉；删不掉也不影响本次启动。
-      for (const legacy of LEGACY_PROVIDER_IDS) {
-        if (legacy === config.providerId) continue
-        try {
-          await removeProvider(settings, legacy)
-          trace(`provider-legacy-removed ${legacy}`)
-        } catch (error) {
-          logger.warn?.(`[multi-credits-pool] 清理旧 provider ${legacy} 失败：${errorText(error)}`)
-        }
-      }
-    })
-    .catch(error => {
-      const message = `[multi-credits-pool] 启动失败：${error instanceof Error ? error.message : String(error)}`
-      trace(message)
-      logger.error?.(message)
-      console.error(message)
-    })
-
-  return proxy
+  return registration
 }

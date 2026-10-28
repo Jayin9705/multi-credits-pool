@@ -9,7 +9,6 @@
  * 文件里的 `CN_MODELS` 只是首启、离线时的兜底。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { dataDir } from './paths.js'
 import { DEFAULT_STRATEGY, isStrategy } from './rotation.js'
@@ -24,12 +23,6 @@ function efforts(...levels) {
 }
 
 export const PLUGIN_CONFIG_BASENAME = 'plugin.json'
-
-/**
- * 固定端口：provider 的 baseURL 要写进宿主配置，端口每次重启都变会让已保存的
- * provider 指向死地址。端口被占用时代理会退回随机端口并改写 host 侧配置。
- */
-export const DEFAULT_PLUGIN_PORT = 34610
 
 /**
  * 兜底模型清单：首启还没联网、或某次刷新失败又没有缓存时用它。
@@ -79,14 +72,12 @@ export function defaultPluginConfig() {
   return {
     providerId: 'multi-credits-pool',
     displayName: 'multi-credits-pool',
-    port: DEFAULT_PLUGIN_PORT,
     defaultContextWindow: 200_000,
     defaultMaxTokens: 64_000,
     models: CN_MODELS,
     // 空集合表示「全部登记」；用户在自动化里勾掉的模型进这里。
     visibleModels: [],
     catalogAt: 0,
-    secret: '',
     strategy: DEFAULT_STRATEGY,
   }
 }
@@ -151,7 +142,6 @@ export function peekPluginConfig(file = pluginConfigFile()) {
   // 老缓存里没有推理等级声明：按已知 id 补一份，免得升级后要等下一次清单刷新
   // 才能在模型选择器里看到档位。
   merged.models = fillKnownEfforts(merged.models)
-  if (typeof merged.secret !== 'string' || merged.secret.length < 16) merged.secret = defaults.secret
   merged.providerId = providerIdOf(merged.providerId, defaults.providerId)
   merged.displayName = displayNameOf(merged.displayName, defaults.displayName)
   if (!isStrategy(merged.strategy)) merged.strategy = defaults.strategy
@@ -175,7 +165,7 @@ function displayNameOf(value, fallback) {
 
 /**
  * 读配置：文件里的字段覆盖缺省值，数组字段整体替换。
- * 首次运行会把合并后的结果写回文件，并生成一个代理 Bearer 密钥持久化。
+ * 首次运行会把合并后的结果写回文件。
  */
 export function readPluginConfig(file = pluginConfigFile()) {
   const defaults = defaultPluginConfig()
@@ -197,8 +187,6 @@ export function readPluginConfig(file = pluginConfigFile()) {
   if (!Number.isInteger(merged.catalogAt) || merged.catalogAt < 0) merged.catalogAt = 0
   if (typeof merged.catalogRegion !== 'string' || merged.catalogRegion === '') merged.catalogRegion = 'cn'
   merged.providerId = providerIdOf(merged.providerId, defaults.providerId)
-  if (!Number.isInteger(merged.port) || merged.port < 0 || merged.port > 65_535) merged.port = defaults.port
-  if (typeof merged.secret !== 'string' || merged.secret.length < 16) merged.secret = randomBytes(24).toString('base64url')
   merged.displayName = displayNameOf(merged.displayName, defaults.displayName)
   if (!isStrategy(merged.strategy)) merged.strategy = defaults.strategy
 

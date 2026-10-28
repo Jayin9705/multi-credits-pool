@@ -31,8 +31,11 @@ function numberField(obj, key) {
  * `CycleEndTime` 是这一段积分本周期结束的时刻，也是唯一有操作意义的截止；
  * `DeductionEndTime` 是产品级的长期扣减截止（实测是 2035 年那种日期），拿它当
  * 到期只会把「马上作废的积分」显示成「还能用十年」。
+ *
+ * 个人版用 PascalCase（`CycleEndTime`），企业版用 camelCase（`cycleEndTime`），
+ * 两种拼写都要认——只认一种，企业版账号的到期日就永远是空的。
  */
-const EXPIRY_KEYS = ['CycleEndTime', 'ExpiredTime']
+const EXPIRY_KEYS = ['CycleEndTime', 'ExpiredTime', 'cycleEndTime', 'expiredTime']
 
 function packageEndTime(account) {
   for (const key of EXPIRY_KEYS) {
@@ -125,15 +128,26 @@ function indexOfAny(obj, keys) {
   return undefined
 }
 
+/** 测试入口：把一份企业版信封直接交给解析器。 */
+export function parseEnterpriseForTest(envelope) {
+  return parseEnterprise(envelope)
+}
+
 function parseEnterprise(envelope) {
   const wrapper = isObject(envelope.data) ? envelope.data : {}
   const response = isObject(wrapper.Response) ? wrapper.Response : wrapper
   const data = isObject(response.Data) ? response.Data : response
-  // 官方两个调用点的字段拼写不一致（limitNum/credit 与 limit_num/used_num），都收。
-  const limit = indexOfAny(data, ['limitNum', 'limit_num', 'credit', 'totalNum'])
-    ?? (isObject(data.data) ? indexOfAny(data.data, ['limitNum', 'limit_num', 'credit', 'totalNum']) : undefined)
-  const used = indexOfAny(data, ['usedNum', 'used_num', 'usedCredit'])
-    ?? (isObject(data.data) ? indexOfAny(data.data, ['usedNum', 'used_num', 'usedCredit']) : undefined)
+  // 官方两个调用点的字段拼写不一致（limitNum/limit_num 与 usedNum/used_num），都收。
+  //
+  // `credit` 是**已用**量，不是总量。实测企业版响应：
+  //   {"credit":13.74,"limitNum":2000,"cycleEndTime":"..."}
+  // 一个跑了 41 次请求的账号 credit 是 13.74（每次约 0.33 积分，按 token 精确计费），
+  // 而总量是整数 2000。把它当总量别名会让 limitNum 先命中、credit 被忽略，
+  // used 找不到字段退化成 0，于是「已用 13.74」被显示成「剩 2000」——余额永远不动。
+  const limit = indexOfAny(data, ['limitNum', 'limit_num', 'totalNum'])
+    ?? (isObject(data.data) ? indexOfAny(data.data, ['limitNum', 'limit_num', 'totalNum']) : undefined)
+  const used = indexOfAny(data, ['usedNum', 'used_num', 'usedCredit', 'credit'])
+    ?? (isObject(data.data) ? indexOfAny(data.data, ['usedNum', 'used_num', 'usedCredit', 'credit']) : undefined)
   if (limit === undefined) {
     throw new Error('企业版余额响应里没有可识别的配额字段')
   }

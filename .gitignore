@@ -8,3 +8,6 @@ node_modules/
 .credits/
 .publish/
 tools/preview-*.html
+
+# 从 DSH 安装包里解出来的宿主内核（tools/extract-kernel.mjs 生成）
+kernel/
