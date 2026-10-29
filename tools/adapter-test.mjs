@@ -545,6 +545,78 @@ function sseBody(lines) {
   check('没有 llm 服务时不抛', threw === undefined)
 }
 
+// ── 图片能力：按上游声明给模态，图片真的发出去 ──────────────────────────────
+
+{
+  // 上游按模型声明 supportsImages。丢掉它，选择器里所有模型都成了纯文本路由，
+  // 用户一贴图就被宿主挡在门外（「当前模型不支持图片」）。
+  const { parseModelCatalog } = await import('../src/model-catalog.js')
+  const doc = {
+    models: [
+      { id: 'vision-model', name: 'V', maxInputTokens: 1000, maxOutputTokens: 100, supportsImages: true },
+      { id: 'text-model', name: 'T', maxInputTokens: 1000, maxOutputTokens: 100, supportsImages: false },
+      { id: 'disabled-mm', name: 'D', maxInputTokens: 1000, maxOutputTokens: 100, supportsImages: true, disabledMultimodal: true },
+    ],
+    agents: [{ name: 'cli', models: ['vision-model', 'text-model', 'disabled-mm'] }],
+  }
+  const parsed = parseModelCatalog(doc)
+  const byId = Object.fromEntries(parsed.map(m => [m.id, m]))
+  equal('支持图片的模型带上标记', byId['vision-model'].supportsImages, true)
+  equal('不支持图片的模型标记为 false', byId['text-model'].supportsImages, false)
+  equal('disabledMultimodal 优先于 supportsImages', byId['disabled-mm'].supportsImages, false)
+}
+
+{
+  const rotator = new AccountRotator({ strategy: 'sticky' })
+  const models = [
+    { id: 'vision', name: 'V', contextWindow: 1000, maxTokens: 100, supportsImages: true },
+    { id: 'text', name: 'T', contextWindow: 1000, maxTokens: 100, supportsImages: false },
+  ]
+  const adapter = new CreditsPoolAdapter({
+    accountsOf: () => [],
+    rotator,
+    modelsOf: () => models,
+    providerId: 'multi-credits-pool',
+    displayName: 'multi-credits-pool',
+    defaultContextWindow: 1000,
+    defaultMaxTokens: 100,
+  })
+  const listed = await adapter.listModels('multi-credits-pool')
+  deepEqual('listModels 给支持图片的模型两个模态', listed[0].inputModalities, ['text', 'image'])
+  deepEqual('listModels 给纯文本模型一个模态', listed[1].inputModalities, ['text'])
+
+  const vision = await adapter.resolveModel('multi-credits-pool', 'vision')
+  deepEqual('resolveModel 同样声明图片', vision.inputModalities, ['text', 'image'])
+  const text = await adapter.resolveModel('multi-credits-pool', 'text')
+  deepEqual('resolveModel 纯文本只有一个模态', text.inputModalities, ['text'])
+}
+
+{
+  // 图片块必须真的进请求体，否则模型收不到图。
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'text', text: '这是什么' },
+      { type: 'image', attachment: { url: 'data:image/png;base64,AAAA' } },
+    ],
+  }]
+  const out = toChatMessages(messages)
+  check('带图片的消息保持块数组', Array.isArray(out[0].content))
+  equal('文本块在', out[0].content[0].text, '这是什么')
+  equal('图片块转成 image_url', out[0].content[1].type, 'image_url')
+  equal('图片 URL 传下去了', out[0].content[1].image_url.url, 'data:image/png;base64,AAAA')
+}
+
+{
+  // 卸载过的图片只剩占位文本，不能再当图片发。
+  const messages = [{
+    role: 'user',
+    content: [{ type: 'image', offloaded: true, attachment: { url: 'data:image/png;base64,AAAA' } }],
+  }]
+  const out = toChatMessages(messages)
+  equal('卸载过的图片被丢掉', out.length, 0)
+}
+
 // ── 余额解析：企业版 credit 是已用，不是总量 ────────────────────────────────
 
 {

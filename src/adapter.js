@@ -192,7 +192,7 @@ export class CreditsPoolAdapter {
       id: model.id,
       name: model.name ?? model.id,
       ...(typeof model.description === 'string' && model.description !== '' ? { description: model.description } : {}),
-      inputModalities: ['text'],
+      inputModalities: modalitiesOf(model),
     }))
   }
 
@@ -214,7 +214,7 @@ export class CreditsPoolAdapter {
       provider,
       id: model,
       name: entry?.name ?? model,
-      inputModalities: ['text'],
+      inputModalities: modalitiesOf(entry),
       context: { contextWindow },
       defaultMaxTokens: maxTokens,
     }
@@ -451,6 +451,19 @@ function messageShapeOf(body) {
     const parts = content.map(part => (typeof part === 'string' ? 'string' : typeof part?.type === 'string' ? part.type : typeof part))
     return `${role}:[${parts.join(',')}]`
   }).join(' ')
+}
+
+/**
+ * 这个模型能读什么。
+ *
+ * 上游按模型声明 `supportsImages`（清单解析时已折成同名字段）。声明为真就给
+ * `['text', 'image']`，否则只给 `['text']`。
+ *
+ * 这个字段决定宿主会不会把图片投影成占位文本：声明里没有 image，用户一贴图
+ * 就被挡在门外，报「当前模型不支持图片」——即使上游那个模型其实能读图。
+ */
+function modalitiesOf(entry) {
+  return entry?.supportsImages === true ? ['text', 'image'] : ['text']
 }
 
 /** 一个终止的失败分片。 */

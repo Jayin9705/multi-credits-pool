@@ -26,6 +26,18 @@ function blocksOf(content) {
   return out
 }
 
+/**
+ * 一个图片块能发出去的 URL，拿不到就返回 undefined。
+ *
+ * 宿主的图片块把数据放在 `attachment.url`（data URL 或远端地址）。`offloaded`
+ * 为真的块表示图片已被宿主卸载到磁盘，只剩占位文本，不能再当图片发。
+ */
+function imageDataUrl(block) {
+  if (block?.offloaded === true) return undefined
+  const url = block?.attachment?.url ?? block?.url
+  return typeof url === 'string' && url !== '' ? url : undefined
+}
+
 /** 块列表里的全部文本，按出现顺序用换行拼起来。 */
 function textOf(blocks) {
   const parts = []
@@ -171,12 +183,23 @@ export function toChatMessages(messages) {
     }
     const parts = []
     for (const block of blocks) {
-      if (block?.type === 'text' && block.text) parts.push({ type: 'text', text: block.text })
+      if (block?.type === 'text' && block.text) {
+        parts.push({ type: 'text', text: block.text })
+        continue
+      }
+      if (block?.type === 'image') {
+        const url = imageDataUrl(block)
+        // 卸载过的图片只剩占位文本，宿主已经把它投影成文字了；这里再塞一个
+        // 空 URL 只会让上游整条 400。
+        if (url !== undefined) parts.push({ type: 'image_url', image_url: { url } })
+      }
     }
     if (parts.length === 0) continue
+    // 只有纯文本时才折成字符串：带图片的消息必须保持块数组，否则图片会丢。
+    const textOnly = parts.every(part => part.type === 'text')
     out.push({
       role: 'user',
-      content: parts.length === 1 && parts[0].type === 'text' ? parts[0].text : parts,
+      content: textOnly && parts.length === 1 ? parts[0].text : parts,
     })
   }
   return out

@@ -71,6 +71,10 @@ export function parseModelCatalog(document) {
       maxTokens,
       // 没有档位声明的模型不带这个字段：宿主看到空字典会判配置非法。
       ...(efforts === undefined ? {} : { reasoningEfforts: efforts }),
+      // 上游按模型声明能不能读图。丢掉这个字段，选择器里所有模型都会被当成
+      // 纯文本路由，用户一贴图就被宿主挡在门外（「当前模型不支持图片」）。
+      // `disabledMultimodal` 是上游的显式关闭标记，优先于 supportsImages。
+      supportsImages: entry.supportsImages === true && entry.disabledMultimodal !== true,
     })
   }
   const models = []
