@@ -76,7 +76,7 @@ export function defaultPluginConfig() {
     defaultMaxTokens: 64_000,
     models: CN_MODELS,
     // 空集合表示「全部登记」；用户在自动化里勾掉的模型进这里。
-    visibleModels: [],
+    hiddenModels: [],
     catalogAt: 0,
     strategy: DEFAULT_STRATEGY,
   }
@@ -90,9 +90,23 @@ export function defaultPluginConfig() {
  */
 export function visibleModelsOf(config) {
   const all = Array.isArray(config?.models) ? config.models : []
-  const hidden = new Set(Array.isArray(config?.visibleModels) ? config.visibleModels : [])
+  const hidden = new Set(hiddenModelsOf(config))
   const shown = hidden.size === 0 ? all : all.filter(model => !hidden.has(model.id))
   return shown.length > 0 ? shown : all
+}
+
+/**
+ * 被用户勾掉的模型 id。
+ *
+ * 这个字段以前叫 `visibleModels`，但存的一直是**隐藏**名单——名字和语义相反，
+ * 谁按字面理解都会读错。现在正名成 `hiddenModels`，旧字段仍然认，读到就搬过来。
+ */
+export function hiddenModelsOf(config) {
+  const current = config?.hiddenModels
+  if (Array.isArray(current)) return current.filter(id => typeof id === 'string' && id !== '')
+  const legacy = config?.visibleModels
+  if (Array.isArray(legacy)) return legacy.filter(id => typeof id === 'string' && id !== '')
+  return []
 }
 
 /**
@@ -107,7 +121,9 @@ export function writeModelCatalog(models, { file = pluginConfigFile(), region = 
   const next = {
     ...config,
     models,
-    visibleModels: (Array.isArray(config.visibleModels) ? config.visibleModels : []).filter(id => ids.has(id)),
+    hiddenModels: hiddenModelsOf(config).filter(id => ids.has(id)),
+    // 旧字段不再写，读的时候仍然认（见 hiddenModelsOf）。
+    visibleModels: undefined,
     catalogRegion: region,
     catalogAt: nowMs,
   }
@@ -182,8 +198,9 @@ export function readPluginConfig(file = pluginConfigFile()) {
   const merged = { ...defaults, ...stored }
   if (!Array.isArray(merged.models) || merged.models.length === 0) merged.models = defaults.models
   merged.models = fillKnownEfforts(merged.models)
-  if (!Array.isArray(merged.visibleModels)) merged.visibleModels = defaults.visibleModels
-  merged.visibleModels = merged.visibleModels.filter(id => typeof id === 'string' && id !== '')
+  merged.hiddenModels = hiddenModelsOf(merged)
+  // 旧字段搬完就删掉，免得两份数据各说各话。
+  delete merged.visibleModels
   if (!Number.isInteger(merged.catalogAt) || merged.catalogAt < 0) merged.catalogAt = 0
   if (typeof merged.catalogRegion !== 'string' || merged.catalogRegion === '') merged.catalogRegion = 'cn'
   merged.providerId = providerIdOf(merged.providerId, defaults.providerId)

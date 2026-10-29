@@ -12,7 +12,7 @@ import { sweep } from './schedule.js'
 import { collectStatus } from './summary.js'
 import { deleteAccount, findAccount, listAccounts, patchAccount, readLog, readPins, upsertAccount, writePins } from './store.js'
 import { accountFromLogin, beginLogin, forgetLogin, pollLogin } from './auth.js'
-import { pluginConfigFile, readPluginConfig, visibleModelsOf } from './plugin-config.js'
+import { hiddenModelsOf, pluginConfigFile, readPluginConfig, visibleModelsOf } from './plugin-config.js'
 import { DEFAULT_CHECKIN_MINUTE } from './schedule.js'
 import { DEFAULT_STRATEGY, isStrategy } from './rotation.js'
 import { createUpdateChecker } from './update-check.js'
@@ -212,7 +212,7 @@ export function createWebApi(options) {
     const status = await collectStatus(accounts, { balance: true })
     const config = readPluginConfig()
     const models = Array.isArray(config.models) ? config.models : []
-    const hidden = new Set(Array.isArray(config.visibleModels) ? config.visibleModels : [])
+    const hidden = new Set(hiddenModelsOf(config))
     // 余额读数同时喂给轮换器：「优先过期」要看到期时间，「优先用完一个」要看余量。
     if (Array.isArray(status.rows)) {
       options.observe?.(status.rows)
@@ -240,6 +240,7 @@ export function createWebApi(options) {
           contextWindow: Number.isInteger(model.contextWindow) ? model.contextWindow : undefined,
         })),
         visibleModels: visibleModelsOf(config).map(model => model.id),
+        hiddenModels: hiddenModelsOf(config),
         lastRefresh: Number.isInteger(config.catalogAt) ? config.catalogAt : 0,
       },
       // 把这一轮的行数据一起给出去：轮换器要按它排出「下一次会先用谁」。
@@ -342,10 +343,10 @@ export function createWebApi(options) {
         if (shown.length === 0) return { ok: false, message: '至少要留一个模型，否则模型选择器会空掉' }
         // 存的是「勾掉的」：清单刷新后新出现的模型自动可见，不用用户重新点一遍。
         const hidden = [...known].filter(id => !shown.includes(id))
-        writeFileSync(pluginConfigFile(), `${JSON.stringify({ ...config, visibleModels: hidden }, null, 2)}\n`, 'utf8')
+        writeFileSync(pluginConfigFile(), `${JSON.stringify({ ...config, hiddenModels: hidden, visibleModels: undefined }, null, 2)}\n`, 'utf8')
         options.onModelsChange?.()
         dropCache()
-        return { ok: true, visibleModels: visibleModelsOf({ ...config, visibleModels: hidden }).map(model => model.id) }
+        return { ok: true, visibleModels: visibleModelsOf({ ...config, hiddenModels: hidden }).map(model => model.id) }
       }
       case 'refresh-models': {
         try {

@@ -617,6 +617,29 @@ function sseBody(lines) {
   equal('卸载过的图片被丢掉', out.length, 0)
 }
 
+// ── 模型可见性：hiddenModels 是隐藏表，不是可见表 ───────────────────────────
+
+{
+  const { visibleModelsOf, hiddenModelsOf } = await import('../src/plugin-config.js')
+  const models = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+  // 空隐藏表 = 全部可见
+  deepEqual('空隐藏表时全部可见', visibleModelsOf({ models, hiddenModels: [] }).map(m => m.id), ['a', 'b', 'c'])
+
+  // 隐藏表里有的才被挡掉
+  deepEqual('隐藏 b 之后只剩 a、c', visibleModelsOf({ models, hiddenModels: ['b'] }).map(m => m.id), ['a', 'c'])
+
+  // 旧字段名 visibleModels 存的一直是隐藏表，必须照隐藏语义读
+  deepEqual('旧字段按隐藏语义读', visibleModelsOf({ models, visibleModels: ['a', 'b'] }).map(m => m.id), ['c'])
+  deepEqual('hiddenModelsOf 认旧字段', hiddenModelsOf({ visibleModels: ['a'] }), ['a'])
+
+  // 新字段优先于旧字段
+  deepEqual('新字段优先', hiddenModelsOf({ hiddenModels: ['b'], visibleModels: ['a'] }), ['b'])
+
+  // 全部隐藏时退回完整清单，避免选择器空掉
+  deepEqual('全隐藏时退回完整清单', visibleModelsOf({ models, hiddenModels: ['a', 'b', 'c'] }).map(m => m.id), ['a', 'b', 'c'])
+}
+
 // ── 余额解析：企业版 credit 是已用，不是总量 ────────────────────────────────
 
 {
