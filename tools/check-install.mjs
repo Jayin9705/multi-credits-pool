@@ -23,8 +23,16 @@ const INSTALLED = join(DSH_HOME, 'profiles', PROFILE, 'node_modules', 'multi-cre
 /** 顶层要同步的文件。 */
 const TOP_FILES = ['index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'README.md', 'LICENSE']
 
+/**
+ * 内容指纹，忽略换行符差异。
+ *
+ * 仓库里是 LF，装进 profile 后 git/pnpm 可能写成 CRLF（Windows 上很常见）。
+ * 按原始字节比对会把「只有换行不同」也算成不一致，那种误报会让人逐渐无视
+ * 这个检查，反而漏掉真正的差异。
+ */
 function hash(file) {
-  return createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16)
+  const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
+  return createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16)
 }
 
 if (!existsSync(INSTALLED)) {

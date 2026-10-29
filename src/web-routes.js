@@ -340,7 +340,6 @@ export function createWebApi(options) {
         const config = readPluginConfig()
         const known = new Set((Array.isArray(config.models) ? config.models : []).map(model => model.id))
         const shown = requested.filter(id => known.has(id))
-        if (shown.length === 0) return { ok: false, message: '至少要留一个模型，否则模型选择器会空掉' }
         // 存的是「勾掉的」：清单刷新后新出现的模型自动可见，不用用户重新点一遍。
         const hidden = [...known].filter(id => !shown.includes(id))
         writeFileSync(pluginConfigFile(), `${JSON.stringify({ ...config, hiddenModels: hidden, visibleModels: undefined }, null, 2)}\n`, 'utf8')

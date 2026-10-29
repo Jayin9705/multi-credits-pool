@@ -1570,12 +1570,18 @@ window.__ModuleLoader__.load({
 			const ready = data.busy || data.state === undefined
 			const toggle = id => {
 				const next = catalog.filter(item => (item.id === id ? !shown.has(id) : shown.has(item.id))).map(item => item.id)
-				if (next.length === 0) {
-					// 全勾掉会让宿主的模型选择器空着，服务端也会拒；这里提前拦住。
-					data.setNotice('至少留一个模型')
-					return
-				}
 				void data.actions.visibleModels(next)
+			}
+			/**
+			 * 一键全开 / 一键全关。
+			 *
+			 * 全关之后 visibleModelsOf 会退回完整清单（宿主的模型选择器不能空着），
+			 * 所以「全部关掉」的实际效果是隐藏表里塞满全部 id——界面上如实说明，
+			 * 不让用户以为选择器真的空了。
+			 */
+			const setAll = on => {
+				if (catalog.length === 0) return
+				void data.actions.visibleModels(on ? catalog.map(item => item.id) : [])
 			}
 			return h(
 				'div',
@@ -1588,6 +1594,8 @@ window.__ModuleLoader__.load({
 						'span',
 						{ className: 'credits-acc-actions' },
 						h('span', { className: 'credits-aside' }, config?.lastRefresh > 0 ? `清单更新于 ${clockText(config.lastRefresh)}` : '还没从上游取过清单'),
+						h(Btn, { disabled: ready || catalog.length === 0, onClick: () => setAll(true) }, '一键启用'),
+						h(Btn, { disabled: ready || catalog.length === 0, onClick: () => setAll(false) }, '一键禁用'),
 						h(Btn, { disabled: ready, onClick: () => void data.actions.refreshModels() }, '立即更新'),
 					),
 				),
